@@ -1,6 +1,6 @@
 import crypto from "crypto";
 
-const SPREADSHEET_ID = "1VKAM1-EuXJqK7O3sjPhPnGhWAqUxVUmogxDJp3GRM5Y";
+export const SPREADSHEET_ID = "1VKAM1-EuXJqK7O3sjPhPnGhWAqUxVUmogxDJp3GRM5Y";
 
 export async function getAccessToken(serviceAccount) {
   const header = {
@@ -55,7 +55,7 @@ export async function getAccessToken(serviceAccount) {
 export async function writeToGoogleSheet(accessToken, values) {
   const spreadsheetId = SPREADSHEET_ID;
   // const range = 'Sheet1!A1:C3';  // The range where you want to write data
-  const range = `Sheet1!A3:َ${values.length + 2}`; // The range where you want to write data
+  const range = `Sheet1!A3:V${values.length + 2}`; // The range where you want to write data
 
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=RAW`;
 
@@ -87,7 +87,7 @@ export async function writeToGoogleSheet(accessToken, values) {
 }
 
 export async function readGoogleSheet(accessToken) {
-  const range = "students!A2:M200"; // The range where you want to read data
+  const range = "Sheet1"; // The range where you want to read data
   // Construct the Sheets API URL
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}`;
 

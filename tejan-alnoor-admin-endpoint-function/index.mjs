@@ -15,7 +15,7 @@ const tableName = "Students";
 import {
   getAccessToken,
   writeToGoogleSheet,
-  readGoogleSheet,
+  SPREADSHEET_ID,
 } from "./googleApi.mjs";
 
 let secrets = undefined;
@@ -58,12 +58,6 @@ function buildResponse(code, body) {
   };
 }
 
-function findNaN(object, keys) {
-  return keys.find(
-    (key) => object[key] !== undefined && isNaN(Number(object[key]))
-  );
-}
-
 const initPromise = init();
 
 export const handler = async (event) => {
@@ -92,245 +86,90 @@ export const handler = async (event) => {
   //   return buildResponse( 401, "Unauthorized");
   // }
 
-  if (!path !== "/summary") {
+  if (!path.startsWith("/students")) {
     return buildResponse(404, "Not Found");
   }
 
-  if (httpMethod === "GET") {
-    if (path === "/students") {
-      const response = await awsDocDynamoDbClient.send(
-        new ScanCommand({
-          TableName: tableName,
-          ProjectionExpression:
-            "studentID, studentName, levelID, startWeek, memorizingProgress, revisitProgress, test1, test2, test3, test4, test5",
-        })
-      );
-
-      const googleApiToken = await getAccessToken(
-        JSON.parse(secrets["service-account"])
-      );
-      return buildResponse(200, response?.Items ?? []);
-    }
-
-    if (path.split("/") < 3 || isNaN(Number(path.split("/")[2]))) {
-      return buildResponse(400, "Bad Request");
-    }
-
-    const studentID = Number(path.split("/")[2]);
-    const student =
+  if (httpMethod === "GET" && path === "/students/exportProgress") {
+    console.log("getting students");
+    const students =
       (
         await awsDocDynamoDbClient.send(
-          new GetCommand({
+          new ScanCommand({
             TableName: "Students",
-            Key: {
-              studentID,
-            },
+            ProjectionExpression:
+              "studentID, studentName, levelID, startWeek, memorizingProgress, revisitProgress, test1, test2, test3, test4, test5",
           })
         )
-      )?.Item ?? {};
+      )?.Items ?? [];
 
-    if (!student) {
-      return buildResponse(404, "Not Found");
-    }
-
-    const studentLevel =
+    console.log("getting levels");
+    const levels =
       (
         await awsDocDynamoDbClient.send(
-          new GetCommand({
+          new ScanCommand({
             TableName: "Levels",
-            Key: {
-              levelID: student.levelID,
-            },
-            ProjectionExpression: `levelName, progressUnit, weeksPlan[${
-              student.startWeek - 1
-            }][0], weeksPlan[${student.startWeek - 1 + 3}][1], weeksPlan[${
-              student.startWeek - 1 + 11
-            }][1]`,
+            ProjectionExpression: `levelID, levelName, weeksPlan`,
           })
         )
-      )?.Item ?? {};
+      )?.Items ?? [];
 
-    console.log("studentLevel", studentLevel);
+    console.log("got students and levels, mapping levels");
+    const levelsMap = levels.reduce((acc, level) => {
+      acc[level.levelID] = level;
+      return acc;
+    }, {});
 
+    console.log("mapping students to rows");
+    const studentsRows = students
+      .sort((a, b) => a.studentID - b.studentID)
+      .map((student) => {
+        const studentLevel = levelsMap[student.levelID];
+        const revisitSummary = studentLevel.weeksPlan
+          .slice(student.startWeek - 1, student.startWeek - 1 + 12)
+          .map((week) => {
+            if (
+              student.revisitProgress.find(
+                (range) => range[0] <= week[0] && range[1] >= week[1]
+              )
+            ) {
+              return 1; //"✅";
+            }
+
+            return 0; // "❌";
+          });
+
+        const defaultRevisitFill = Array(
+          Math.max(12 - revisitSummary.length, 0)
+        ).fill("");
+
+        return [
+          Number(student.studentID),
+          student.studentName,
+          studentLevel.levelName,
+          Math.floor(student.startWeek / 4) + 1,
+          Number(student.memorizingProgress),
+          ...revisitSummary,
+          ...defaultRevisitFill,
+          Number(student.test1),
+          Number(student.test2),
+          Number(student.test3),
+          Number(student.test4),
+          Number(student.test5),
+        ];
+      });
+
+    console.log("getting google api token");
+    const googleApiToken = await getAccessToken(
+      JSON.parse(secrets["service-account"])
+    );
+
+    console.log("writing to google sheet");
+    await writeToGoogleSheet(googleApiToken, studentsRows);
+    console.log("done writing to google sheet");
     return buildResponse(200, {
-      ...student,
-      levelName: studentLevel.levelName,
-      progressUnit: studentLevel.progressUnit,
-      start: studentLevel.weeksPlan[0][0],
-      end: studentLevel.weeksPlan[2]?.[0] ?? studentLevel.weeksPlan[1]?.[0],
+      spreadsheetId: SPREADSHEET_ID,
     });
-  }
-
-  if (!body) {
-    console.log("Body is empty");
-    return buildResponse(400, "Bad Request");
-  }
-
-  if (path.split("/") < 3 || isNaN(Number(path.split("/")[2]))) {
-    console.log("Path is invalid " + path);
-    return buildResponse(400, "Bad Request");
-  }
-
-  const studentID = Number(path.split("/")[2]);
-
-  if (body.studentID !== studentID) {
-    console.log("studentID in body does not match path");
-    return buildResponse(400, "Bad Request");
-  }
-
-  const {
-    studentID: _studentID,
-    memorizingProgress,
-    revisitProgress,
-    test1,
-    test2,
-    test3,
-    test4,
-    test5,
-    ...rest
-  } = body;
-
-  if (Object.keys(rest).length > 0) {
-    console.log("Body has forbidden keys " + JSON.stringify(rest));
-    return buildResponse(400, "Bad Request");
-  }
-
-  console.log("here 1");
-
-  if (
-    Object.values({
-      memorizingProgress,
-      revisitProgress,
-      test1,
-      test2,
-      test3,
-      test4,
-      test5,
-    }).filter((value) => value !== undefined).length === 0
-  ) {
-    console.log("Body has no updates " + JSON.stringify(body));
-    return buildResponse(400, "Bad Request");
-  }
-
-  console.log("here 2");
-
-  const notValidNumberAttr = findNaN(body, [
-    "memorizingProgress",
-    "test1",
-    "test2",
-    "test3",
-    "test4",
-    "test5",
-  ]);
-
-  if (notValidNumberAttr) {
-    console.log(
-      `${notValidNumberAttr} is not a number ` + JSON.stringify(body)
-    );
-    return buildResponse(400, "Bad Request");
-  }
-
-  console.log("here 3");
-  if (
-    revisitProgress !== undefined &&
-    (!Array.isArray(revisitProgress) ||
-      revisitProgress.some(
-        (range) =>
-          !Array.isArray(range) ||
-          range?.length !== 2 ||
-          range.some((item) => isNaN(Number(item))) ||
-          Number(range[0]) > Number(range[1])
-      ))
-  ) {
-    console.log(
-      "revisitProgress is not an array of ranges " + JSON.stringify(body)
-    );
-    return buildResponse(400, "Bad Request");
-  }
-
-  const updateExpressions = [];
-  const expressionAttributeNames = {};
-  const expressionAttributeValues = {};
-
-  if (memorizingProgress !== undefined) {
-    updateExpressions.push("#memorizingProgress = :memorizingProgress ");
-    expressionAttributeNames["#memorizingProgress"] = "memorizingProgress";
-    expressionAttributeValues[":memorizingProgress"] = memorizingProgress;
-  }
-
-  if (revisitProgress !== undefined) {
-    revisitProgress.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    const mergedProgress = [];
-    let currentRange = revisitProgress?.[0];
-
-    for (let i = 1; i < revisitProgress.length; i++) {
-      if (currentRange[1] >= revisitProgress[i][0] - 1) {
-        currentRange[1] = Math.max(currentRange[1], revisitProgress[i][1]);
-      } else {
-        mergedProgress.push(currentRange);
-        currentRange = revisitProgress[i];
-      }
-    }
-
-    if (currentRange) {
-      mergedProgress.push(currentRange);
-    }
-
-    updateExpressions.push("#revisitProgress = :revisitProgress ");
-    expressionAttributeNames["#revisitProgress"] = "revisitProgress";
-    expressionAttributeValues[":revisitProgress"] = mergedProgress;
-  }
-
-  if (test1 !== undefined) {
-    updateExpressions.push("#test1 = :test1 ");
-    expressionAttributeNames["#test1"] = "test1";
-    expressionAttributeValues[":test1"] = test1;
-  }
-
-  if (test2 !== undefined) {
-    updateExpressions.push("#test2 = :test2 ");
-    expressionAttributeNames["#test2"] = "test2";
-    expressionAttributeValues[":test2"] = test2;
-  }
-
-  if (test3 !== undefined) {
-    updateExpressions.push("#test3 = :test3 ");
-    expressionAttributeNames["#test3"] = "test3";
-    expressionAttributeValues[":test3"] = test3;
-  }
-
-  if (test4 !== undefined) {
-    updateExpressions.push("#test4 = :test4 ");
-    expressionAttributeNames["#test4"] = "test4";
-    expressionAttributeValues[":test4"] = test4;
-  }
-
-  if (test5 !== undefined) {
-    updateExpressions.push("#test5 = :test5 ");
-    expressionAttributeNames["#test5"] = "test5";
-    expressionAttributeValues[":test5"] = test5;
-  }
-
-  console.log("here 4");
-
-  const params = {
-    TableName: "Students", // Replace with your table name
-    Key: {
-      studentID: studentID, // Replace with your primary key and value
-    },
-    UpdateExpression: "SET " + updateExpressions.join(", "),
-    ExpressionAttributeNames: expressionAttributeNames,
-    ExpressionAttributeValues: expressionAttributeValues,
-    ReturnValues: "UPDATED_NEW", // Optionally return updated attributes
-  };
-
-  try {
-    const data = await awsDocDynamoDbClient.send(new UpdateCommand(params));
-    console.log("Update student succeeded:", data.Attributes);
-    return buildResponse(200, data?.Attributes ?? {});
-  } catch (error) {
-    console.error("Update student  failed:", error);
-    return buildResponse(500, "Internal Server Error");
   }
 };
 
@@ -343,33 +182,13 @@ export const handler = async (event) => {
 //   requestContext: {
 //     http: {
 //       method: "GET",
-//       path: "/students/1",
+//       path: "/students/exportProgress",
 //     },
 //   },
 //   queryStringParameters: {
 //     token: "nhXpMMw!fnEmOVFVDRl13jqmrwU7M#",
 //   },
-// }).then((res) => console.log("test", res));
-
-// handler({
-//   requestContext: {
-//     http: {
-//       method: "PUT",
-//       path: "/students/1",
-//     },
+//   headers: {
+//     origin: "http://localhost:3000",
 //   },
-//   queryStringParameters: {
-//     token: "nhXpMMw!fnEmOVFVDRl13jqmrwU7M#",
-//   },
-//   body: JSON.stringify({
-//     studentID: 1,
-//     // memorizingProgress: 474,
-//     revisitProgress: [
-//       [452, 460],
-//       [461, 470],
-//       [475, 480],
-//     ],
-//   }),
 // }).then((res) => console.log("test", res));
-
-// 1, 33

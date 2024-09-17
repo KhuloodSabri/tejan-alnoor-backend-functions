@@ -136,8 +136,8 @@ export const handler = async (event) => {
             ProjectionExpression: `levelName, progressUnit, weeksPlan[${
               student.startWeek - 1
             }][0], weeksPlan[${student.startWeek - 1 + 3}][1], weeksPlan[${
-              student.startWeek - 1 + 11
-            }][1]`,
+              student.startWeek - 1 + 7
+            }][1],weeksPlan[${student.startWeek - 1 + 11}][1]`,
           })
         )
       )?.Item ?? {};
@@ -149,7 +149,10 @@ export const handler = async (event) => {
       levelName: studentLevel.levelName,
       progressUnit: studentLevel.progressUnit,
       start: studentLevel.weeksPlan[0][0],
-      end: studentLevel.weeksPlan[2]?.[0] ?? studentLevel.weeksPlan[1]?.[0],
+      end:
+        studentLevel.weeksPlan[3]?.[0] ??
+        studentLevel.weeksPlan[2]?.[0] ??
+        studentLevel.weeksPlan[1]?.[0],
     });
   }
 
