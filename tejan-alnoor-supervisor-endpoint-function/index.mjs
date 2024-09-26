@@ -13,8 +13,6 @@ import {
 const SECRET_KEY = "tejan_al_noor";
 const tableName = "Students";
 
-console.log("dev", process.env.DEV);
-
 let secrets = undefined;
 const awsSecretsClient = new SecretsManagerClient({
   region: "eu-north-1",
@@ -73,7 +71,7 @@ const initPromise = init();
 
 export const handler = async (event) => {
   console.log("starting hereeeeeee");
-  console.log("event" + JSON.stringify(event));
+  console.log("event" + JSON.stringify(event, null, 2));
   const httpMethod = event.requestContext.http.method;
   const queryParams = event.queryStringParameters || {};
   const body = JSON.parse(event.body ?? "{}");
