@@ -1,8 +1,11 @@
 import express from "express";
+import cors from "cors";
 import { handler as supervisorHandler } from "../tejan-alnoor-supervisor-endpoint-function/index.mjs";
 import { handler as adminHandler } from "../tejan-alnoor-admin-endpoint-function/index.mjs";
 
 const app = express();
+
+app.use(cors());
 app.use(express.json());
 
 app.use("/", async (req, res) => {
@@ -14,6 +17,8 @@ app.use("/", async (req, res) => {
 
   // Get the request body
   const body = req.body;
+
+  console.log("Request body:", body);
 
   // Get the request path
   const path = req.path;
@@ -35,8 +40,8 @@ app.use("/", async (req, res) => {
         method: method,
         path: handlerPath,
       },
-      body: body,
     },
+    body: JSON.stringify(body),
     headers: headers,
     queryStringParameters: query,
   });

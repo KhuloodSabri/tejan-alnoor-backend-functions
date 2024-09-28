@@ -12,7 +12,8 @@ function getVersions() {
   const files = fs.readdirSync("./versions");
 
   return files
-    .map((file) => file.split(".mjs")?.[0])
+    .filter((file) => file.endsWith(".mjs"))
+    .map((file) => file.split(".mjs")[0])
     .filter(Boolean)
     .sort();
 }
@@ -203,6 +204,28 @@ async function run(env, targetVersion) {
   }
 }
 
+function createMigration(description) {
+  const now = new Date();
+  const timestamp = now
+    .toISOString()
+    .split(".")[0]
+    .replace(/[-:]/g, "-")
+    .replace("T", "-");
+  const migrationName = `${timestamp}`;
+
+  const migrationTemplate = `export const description = "${description}"
+
+export async function up(client) {
+// Write your migration code here
+}
+
+export async function down(client) {
+// Write your rollback code here
+}`;
+
+  fs.writeFileSync(`./versions/${migrationName}.mjs`, migrationTemplate);
+}
+
 const args = process.argv.slice(2); // Slice to remove the first two default arguments
 const usageMessage = `Please choose whether
     - to run migrations
@@ -235,8 +258,14 @@ if (args[0] === "run") {
         Examples:
         node index.mjs create "My migration desciption"`);
   }
-  //   createMigration(args[1]);
+  createMigration(args[1]);
 } else if (args[0] === "version") {
+  if (args.length < 2) {
+    throw new Error(`Please provide the migration env.
+        Examples:
+        node index.mjs version local`);
+  }
+
   const client = getDbClient(args[1]);
   getCurrentVersion(client);
 } else {

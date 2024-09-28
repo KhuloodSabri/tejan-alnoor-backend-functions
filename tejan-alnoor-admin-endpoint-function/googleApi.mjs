@@ -1,6 +1,9 @@
 import crypto from "crypto";
 
-export const SPREADSHEET_ID = "1VKAM1-EuXJqK7O3sjPhPnGhWAqUxVUmogxDJp3GRM5Y";
+export const SPREADSHEET_ID =
+  process.env.DEV === "true"
+    ? "1_utL2VYccQEGe5il7_URxybDmwJolATQiQlP81rOfJE"
+    : "1VKAM1-EuXJqK7O3sjPhPnGhWAqUxVUmogxDJp3GRM5Y";
 
 export async function getAccessToken(serviceAccount) {
   const header = {

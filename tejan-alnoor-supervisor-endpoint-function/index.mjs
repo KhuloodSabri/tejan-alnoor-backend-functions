@@ -70,13 +70,12 @@ function findNaN(object, keys) {
 const initPromise = init();
 
 export const handler = async (event) => {
-  console.log("starting hereeeeeee");
-  console.log("event" + JSON.stringify(event, null, 2));
+  const { headers, ...restEvent } = event;
+  console.log("Processing event: " + JSON.stringify(restEvent, null, 2));
   const httpMethod = event.requestContext.http.method;
   const queryParams = event.queryStringParameters || {};
   const body = JSON.parse(event.body ?? "{}");
   const path = event.rawPath || event.requestContext.http.path;
-  const origin = event.headers.origin;
 
   if (httpMethod === "OPTIONS") {
     console.log("OPTIONS");
@@ -177,7 +176,12 @@ export const handler = async (event) => {
   const studentID = Number(path.split("/")[2]);
 
   if (body.studentID !== studentID) {
-    console.log("studentID in body does not match path");
+    console.log(
+      "studentID in body does not match path " +
+        body.studentID +
+        " " +
+        studentID
+    );
     return buildResponse(400, "Bad Request");
   }
 

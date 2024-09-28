@@ -22,9 +22,16 @@ let secrets = undefined;
 const awsSecretsClient = new SecretsManagerClient({
   region: "eu-north-1",
 });
-const awsDynamoDbClient = new DynamoDBClient({
-  region: "eu-north-1",
-});
+const awsDynamoDbClient =
+  process.env.DEV === "true"
+    ? new DynamoDBClient({
+        region: "local",
+        endpoint: "http://localhost:8000",
+      })
+    : new DynamoDBClient({
+        region: "eu-north-1",
+      });
+
 const awsDocDynamoDbClient = DynamoDBDocumentClient.from(awsDynamoDbClient);
 
 async function getSecretValue(secretName) {
