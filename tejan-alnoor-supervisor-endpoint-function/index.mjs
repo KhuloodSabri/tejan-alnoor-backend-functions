@@ -2,33 +2,20 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+
 import {
-  ScanCommand,
-  GetCommand,
-  DynamoDBDocumentClient,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+  getRegularStudents,
+  getStudentByID,
+  validateUpdateStudentRequest,
+  updateStudent,
+} from "./services.mjs";
 
 const SECRET_KEY = "tejan_al_noor";
-const tableName = "Students";
 
 let secrets = undefined;
 const awsSecretsClient = new SecretsManagerClient({
   region: "eu-north-1",
 });
-
-const awsDynamoDbClient =
-  process.env.DEV === "true"
-    ? new DynamoDBClient({
-        region: "local",
-        endpoint: "http://localhost:8000",
-      })
-    : new DynamoDBClient({
-        region: "eu-north-1",
-      });
-
-const awsDocDynamoDbClient = DynamoDBDocumentClient.from(awsDynamoDbClient);
 
 async function getSecretValue(secretName) {
   try {
@@ -59,37 +46,6 @@ function buildResponse(code, body) {
     },
     body: JSON.stringify(body),
   };
-}
-
-function findNaN(object, keys) {
-  return keys.find(
-    (key) => object[key] !== undefined && isNaN(Number(object[key]))
-  );
-}
-
-async function getStudentStartWeek(student) {
-  const currentSemesterDetails =
-    (
-      await awsDocDynamoDbClient.send(
-        new GetCommand({
-          TableName: "Configs",
-          Key: {
-            name: "currentSemester",
-          },
-        })
-      )
-    )?.Item?.value ?? null;
-
-  const joinYear = student.joinTime.year;
-  const joinSemester = student.joinTime.semester;
-  const joinMonth = student.joinTime.semesterMonth;
-  let monthsSinceJoin = (currentSemesterDetails.year - joinYear) * 7;
-
-  monthsSinceJoin += (currentSemesterDetails.semester - 1) * 3; // 1 and 2 are 3 months
-  monthsSinceJoin -= (joinSemester - 1) * 3; // 1 and 2 are 3 months
-  monthsSinceJoin -= joinMonth - 1;
-
-  return monthsSinceJoin * 4 + 1;
 }
 
 const initPromise = init();
@@ -125,75 +81,22 @@ export const handler = async (event) => {
 
   if (httpMethod === "GET") {
     if (path === "/students") {
-      const response = await awsDocDynamoDbClient.send(
-        new ScanCommand({
-          TableName: tableName,
-          FilterExpression: "#status = :status", // Filtering based on the status attribute
-          ExpressionAttributeNames: {
-            "#status": "status", // 'status' is the attribute we're filtering on
-          },
-          ExpressionAttributeValues: {
-            ":status": "منتظم", // Only retrieve items where status is 'active'
-          },
-          ProjectionExpression:
-            "studentID, studentName, levelID, supervisorName, gender",
-        })
-      );
-
-      return buildResponse(200, response?.Items ?? []);
+      const students = await getRegularStudents();
+      return buildResponse(200, students);
     }
 
-    if (path.split("/") < 3 || isNaN(Number(path.split("/")[2]))) {
-      return buildResponse(400, "Bad Request");
+    if (path.split("/").length !== 3 || isNaN(Number(path.split("/")[2]))) {
+      return buildResponse(404, "Not Found");
     }
 
     const studentID = Number(path.split("/")[2]);
-    const student =
-      (
-        await awsDocDynamoDbClient.send(
-          new GetCommand({
-            TableName: "Students",
-            Key: {
-              studentID,
-            },
-          })
-        )
-      )?.Item ?? {};
+    const student = await getStudentByID(studentID);
 
     if (!student) {
       return buildResponse(404, "Not Found");
     }
 
-    const studentStartWeek = await getStudentStartWeek(student);
-    console.log("studentStartWeek", studentStartWeek);
-
-    const studentLevel =
-      (
-        await awsDocDynamoDbClient.send(
-          new GetCommand({
-            TableName: "Levels",
-            Key: {
-              levelID: student.levelID,
-            },
-            ProjectionExpression: `levelName, progressUnit, weeksPlan[${
-              studentStartWeek - 1
-            }][0], weeksPlan[${studentStartWeek - 1 + 3}][1], weeksPlan[${
-              studentStartWeek - 1 + 7
-            }][1],weeksPlan[${studentStartWeek - 1 + 11}][1]`,
-          })
-        )
-      )?.Item ?? {};
-
-    return buildResponse(200, {
-      ...student,
-      levelName: studentLevel.levelName,
-      progressUnit: studentLevel.progressUnit,
-      start: studentLevel.weeksPlan[0][0],
-      end:
-        studentLevel.weeksPlan[3]?.[0] ??
-        studentLevel.weeksPlan[2]?.[0] ??
-        studentLevel.weeksPlan[1]?.[0],
-    });
+    return buildResponse(200, student);
   }
 
   if (!body) {
@@ -208,161 +111,13 @@ export const handler = async (event) => {
 
   const studentID = Number(path.split("/")[2]);
 
-  if (body.studentID !== studentID) {
-    console.log(
-      "studentID in body does not match path " +
-        body.studentID +
-        " " +
-        studentID
-    );
-    return buildResponse(400, "Bad Request");
-  }
-
-  const {
-    studentID: _studentID,
-    memorizingProgress,
-    revisitProgress,
-    test1,
-    test2,
-    test3,
-    test4,
-    test5,
-    ...rest
-  } = body;
-
-  if (Object.keys(rest).length > 0) {
-    console.log("Body has forbidden keys " + JSON.stringify(rest));
-    return buildResponse(400, "Bad Request");
-  }
-
-  if (
-    Object.values({
-      memorizingProgress,
-      revisitProgress,
-      test1,
-      test2,
-      test3,
-      test4,
-      test5,
-    }).filter((value) => value !== undefined).length === 0
-  ) {
-    console.log("Body has no updates " + JSON.stringify(body));
-    return buildResponse(400, "Bad Request");
-  }
-
-  const notValidNumberAttr = findNaN(body, [
-    "memorizingProgress",
-    "test1",
-    "test2",
-    "test3",
-    "test4",
-    "test5",
-  ]);
-
-  if (notValidNumberAttr) {
-    console.log(
-      `${notValidNumberAttr} is not a number ` + JSON.stringify(body)
-    );
-    return buildResponse(400, "Bad Request");
-  }
-
-  if (
-    revisitProgress !== undefined &&
-    (!Array.isArray(revisitProgress) ||
-      revisitProgress.some(
-        (range) =>
-          !Array.isArray(range) ||
-          range?.length !== 2 ||
-          range.some((item) => isNaN(Number(item))) ||
-          Number(range[0]) > Number(range[1])
-      ))
-  ) {
-    console.log(
-      "revisitProgress is not an array of ranges " + JSON.stringify(body)
-    );
-    return buildResponse(400, "Bad Request");
-  }
-
-  const updateExpressions = [];
-  const expressionAttributeNames = {};
-  const expressionAttributeValues = {};
-
-  if (memorizingProgress !== undefined) {
-    updateExpressions.push("#memorizingProgress = :memorizingProgress ");
-    expressionAttributeNames["#memorizingProgress"] = "memorizingProgress";
-    expressionAttributeValues[":memorizingProgress"] = memorizingProgress;
-  }
-
-  if (revisitProgress !== undefined) {
-    revisitProgress.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    const mergedProgress = [];
-    let currentRange = revisitProgress?.[0];
-
-    for (let i = 1; i < revisitProgress.length; i++) {
-      if (currentRange[1] >= revisitProgress[i][0] - 1) {
-        currentRange[1] = Math.max(currentRange[1], revisitProgress[i][1]);
-      } else {
-        mergedProgress.push(currentRange);
-        currentRange = revisitProgress[i];
-      }
-    }
-
-    if (currentRange) {
-      mergedProgress.push(currentRange);
-    }
-
-    updateExpressions.push("#revisitProgress = :revisitProgress ");
-    expressionAttributeNames["#revisitProgress"] = "revisitProgress";
-    expressionAttributeValues[":revisitProgress"] = mergedProgress;
-  }
-
-  if (test1 !== undefined) {
-    updateExpressions.push("#test1 = :test1 ");
-    expressionAttributeNames["#test1"] = "test1";
-    expressionAttributeValues[":test1"] = test1;
-  }
-
-  if (test2 !== undefined) {
-    updateExpressions.push("#test2 = :test2 ");
-    expressionAttributeNames["#test2"] = "test2";
-    expressionAttributeValues[":test2"] = test2;
-  }
-
-  if (test3 !== undefined) {
-    updateExpressions.push("#test3 = :test3 ");
-    expressionAttributeNames["#test3"] = "test3";
-    expressionAttributeValues[":test3"] = test3;
-  }
-
-  if (test4 !== undefined) {
-    updateExpressions.push("#test4 = :test4 ");
-    expressionAttributeNames["#test4"] = "test4";
-    expressionAttributeValues[":test4"] = test4;
-  }
-
-  if (test5 !== undefined) {
-    updateExpressions.push("#test5 = :test5 ");
-    expressionAttributeNames["#test5"] = "test5";
-    expressionAttributeValues[":test5"] = test5;
-  }
-
-  const params = {
-    TableName: "Students", // Replace with your table name
-    Key: {
-      studentID: studentID, // Replace with your primary key and value
-    },
-    UpdateExpression: "SET " + updateExpressions.join(", "),
-    ExpressionAttributeNames: expressionAttributeNames,
-    ExpressionAttributeValues: expressionAttributeValues,
-    ReturnValues: "UPDATED_NEW", // Optionally return updated attributes
-  };
-
   try {
-    const data = await awsDocDynamoDbClient.send(new UpdateCommand(params));
-    console.log("Update student succeeded:", data.Attributes);
-    return buildResponse(200, data?.Attributes ?? {});
+    validateUpdateStudentRequest(studentID, body);
   } catch (error) {
-    console.error("Update student  failed:", error);
-    return buildResponse(500, "Internal Server Error");
+    return buildResponse(400, "Bad Request");
   }
+
+  const updatedStudent = await updateStudent(studentID, body);
+
+  return buildResponse(200, updatedStudent);
 };
