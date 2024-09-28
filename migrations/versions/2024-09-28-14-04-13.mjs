@@ -7,7 +7,7 @@ import {
 import csv from "csv-parser";
 import fs from "fs";
 
-export const description = "Add more details to students and levels";
+export const description = "Add more details to students";
 
 function trimStringQuotes(str) {
   let res = str.trim();

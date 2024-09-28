@@ -30,7 +30,7 @@ app.use("/", async (req, res) => {
   const query = req.query;
 
   const handler = path.startsWith("/admin") ? adminHandler : supervisorHandler;
-  const handlerPath = path.endsWith("/admin")
+  const handlerPath = path.startsWith("/admin")
     ? path.split("/admin")[1]
     : path.split("/supervisor")[1];
 
