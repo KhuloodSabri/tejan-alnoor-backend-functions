@@ -56,6 +56,11 @@ async function run(env, targetVersion) {
 
   const versions = getVersions();
 
+  if (versions.length === 0) {
+    console.error("No migrations found.");
+    return;
+  }
+
   let migrationsToRun = [];
   let direction = "up";
 
@@ -76,31 +81,35 @@ async function run(env, targetVersion) {
       migrationsToRun = versions.slice(currentVersionIndex + 1);
     }
   } else if (new RegExp("^(-|\\+)\\d+$").test(targetVersion)) {
-    if (!currentVersion) {
-      console.error(
-        "No migrations have been run yet to run migrations relative to."
-      );
-      return;
-    }
-
     const number = parseInt(targetVersion.slice(1));
 
     if (targetVersion.startsWith("+")) {
       direction = "up";
-      if (versions.length - currentVersionIndex - 1 < number) {
+
+      if (!currentVersion) {
+        migrationsToRun = versions.slice(0, number);
+      } else {
+        if (versions.length - currentVersionIndex - 1 < number) {
+          console.error(
+            `There are only ${
+              versions.length - currentVersionIndex
+            } migrations available after the current version.`
+          );
+          return;
+        }
+
+        migrationsToRun = versions.slice(
+          currentVersionIndex + 1,
+          currentVersionIndex + 1 + number
+        );
+      }
+    } else {
+      if (!currentVersion) {
         console.error(
-          `There are only ${
-            versions.length - currentVersionIndex - 1
-          } migrations available after the current version.`
+          "No migrations have been run yet to downgrade. Please run migrations first."
         );
         return;
       }
-
-      migrationsToRun = versions.slice(
-        currentVersionIndex + 1,
-        currentVersionIndex + 1 + number
-      );
-    } else {
       direction = "down";
 
       if (currentVersionIndex < number - 1) {

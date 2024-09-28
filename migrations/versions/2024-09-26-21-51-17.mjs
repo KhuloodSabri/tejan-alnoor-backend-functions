@@ -2,11 +2,7 @@ import {
   CreateTableCommand,
   DeleteTableCommand,
 } from "@aws-sdk/client-dynamodb";
-import {
-  GetCommand,
-  DynamoDBDocumentClient,
-  PutCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import csv from "csv-parser";
 import fs from "fs";
 

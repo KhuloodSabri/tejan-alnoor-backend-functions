@@ -67,6 +67,31 @@ function findNaN(object, keys) {
   );
 }
 
+async function getStudentStartWeek(student) {
+  const currentSemesterDetails =
+    (
+      await awsDocDynamoDbClient.send(
+        new GetCommand({
+          TableName: "Configs",
+          Key: {
+            name: "currentSemester",
+          },
+        })
+      )
+    )?.Item?.value ?? null;
+
+  const joinYear = student.joinTime.year;
+  const joinSemester = student.joinTime.semester;
+  const joinMonth = student.joinTime.semesterMonth;
+  let monthsSinceJoin = (currentSemesterDetails.year - joinYear) * 7;
+
+  monthsSinceJoin += (currentSemesterDetails.semester - 1) * 3; // 1 and 2 are 3 months
+  monthsSinceJoin -= (joinSemester - 1) * 3; // 1 and 2 are 3 months
+  monthsSinceJoin -= joinMonth - 1;
+
+  return monthsSinceJoin * 4 + 1;
+}
+
 const initPromise = init();
 
 export const handler = async (event) => {
@@ -103,6 +128,13 @@ export const handler = async (event) => {
       const response = await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: tableName,
+          FilterExpression: "#status = :status", // Filtering based on the status attribute
+          ExpressionAttributeNames: {
+            "#status": "status", // 'status' is the attribute we're filtering on
+          },
+          ExpressionAttributeValues: {
+            ":status": "منتظم", // Only retrieve items where status is 'active'
+          },
           ProjectionExpression:
             "studentID, studentName, levelID, supervisorName, gender",
         })
@@ -132,6 +164,9 @@ export const handler = async (event) => {
       return buildResponse(404, "Not Found");
     }
 
+    const studentStartWeek = await getStudentStartWeek(student);
+    console.log("studentStartWeek", studentStartWeek);
+
     const studentLevel =
       (
         await awsDocDynamoDbClient.send(
@@ -141,15 +176,13 @@ export const handler = async (event) => {
               levelID: student.levelID,
             },
             ProjectionExpression: `levelName, progressUnit, weeksPlan[${
-              student.startWeek - 1
-            }][0], weeksPlan[${student.startWeek - 1 + 3}][1], weeksPlan[${
-              student.startWeek - 1 + 7
-            }][1],weeksPlan[${student.startWeek - 1 + 11}][1]`,
+              studentStartWeek - 1
+            }][0], weeksPlan[${studentStartWeek - 1 + 3}][1], weeksPlan[${
+              studentStartWeek - 1 + 7
+            }][1],weeksPlan[${studentStartWeek - 1 + 11}][1]`,
           })
         )
       )?.Item ?? {};
-
-    console.log("studentLevel", studentLevel);
 
     return buildResponse(200, {
       ...student,
@@ -202,8 +235,6 @@ export const handler = async (event) => {
     return buildResponse(400, "Bad Request");
   }
 
-  console.log("here 1");
-
   if (
     Object.values({
       memorizingProgress,
@@ -218,8 +249,6 @@ export const handler = async (event) => {
     console.log("Body has no updates " + JSON.stringify(body));
     return buildResponse(400, "Bad Request");
   }
-
-  console.log("here 2");
 
   const notValidNumberAttr = findNaN(body, [
     "memorizingProgress",
@@ -237,7 +266,6 @@ export const handler = async (event) => {
     return buildResponse(400, "Bad Request");
   }
 
-  console.log("here 3");
   if (
     revisitProgress !== undefined &&
     (!Array.isArray(revisitProgress) ||
@@ -318,8 +346,6 @@ export const handler = async (event) => {
     expressionAttributeValues[":test5"] = test5;
   }
 
-  console.log("here 4");
-
   const params = {
     TableName: "Students", // Replace with your table name
     Key: {
@@ -340,43 +366,3 @@ export const handler = async (event) => {
     return buildResponse(500, "Internal Server Error");
   }
 };
-
-// const httpMethod = event.requestContext.http.method;
-// const queryParams = event.queryStringParameters || {};
-// const body = JSON.parse(event.body ?? "{}");
-// const path = event.rawPath || event.requestContext.http.path;
-
-// handler({
-//   requestContext: {
-//     http: {
-//       method: "GET",
-//       path: "/students/1",
-//     },
-//   },
-//   queryStringParameters: {
-//     token: "nhXpMMw!fnEmOVFVDRl13jqmrwU7M#",
-//   },
-// }).then((res) => console.log("test", res));
-
-// handler({
-//   requestContext: {
-//     http: {
-//       method: "PUT",
-//       path: "/students/1",
-//     },
-//   },
-//   queryStringParameters: {
-//     token: "nhXpMMw!fnEmOVFVDRl13jqmrwU7M#",
-//   },
-//   body: JSON.stringify({
-//     studentID: 1,
-//     // memorizingProgress: 474,
-//     revisitProgress: [
-//       [452, 460],
-//       [461, 470],
-//       [475, 480],
-//     ],
-//   }),
-// }).then((res) => console.log("test", res));
-
-// 1, 33
