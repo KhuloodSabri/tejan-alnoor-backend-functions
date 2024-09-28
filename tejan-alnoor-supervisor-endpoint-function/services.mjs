@@ -46,6 +46,8 @@ async function getStudentStartWeek(student) {
   monthsSinceJoin -= (joinSemester - 1) * 3; // 1 and 2 are 3 months
   monthsSinceJoin -= joinMonth - 1;
 
+  monthsSinceJoin -= student.frozenSemesters.length * 7;
+
   return monthsSinceJoin * 4 + 1;
 }
 
@@ -71,6 +73,7 @@ export async function getRegularStudents() {
 }
 
 export async function getStudentByID(studentID) {
+  // TODO: get only what is needed
   const student =
     (
       await awsDocDynamoDbClient.send(

@@ -144,7 +144,8 @@ export async function up(client) {
                 #status = :status,
                 #groupNumber = :groupNumber,
                 #phoneNumber = :phoneNumber,
-                #joinTime = :joinTime`,
+                #joinTime = :joinTime,
+                #frozenSemesters = :frozenSemesters`,
         ExpressionAttributeNames: {
           "#studentName": "studentName",
           "#supervisorName": "supervisorName",
@@ -152,6 +153,7 @@ export async function up(client) {
           "#groupNumber": "groupNumber",
           "#phoneNumber": "phoneNumber",
           "#joinTime": "joinTime",
+          "#frozenSemesters": "frozenSemesters",
         },
         ExpressionAttributeValues: {
           ":studentName": trimStringQuotes(row["اسم الطالب/ة"]),
@@ -164,6 +166,7 @@ export async function up(client) {
             semester: Number(row["الفصل الذي تم الانضمام به(أول||ثاني||صيفي)"]),
             semesterMonth: Number(row["الشهر الذي تم الانضمام به 1||2||3"]),
           },
+          ":frozenSemesters": [],
         },
       })
     );
@@ -193,6 +196,7 @@ export async function down(client) {
       "groupNumber",
       "phoneNumber",
       "joinTime",
+      "frozenSemesters",
     ];
 
     await awsDocDynamoDbClient.send(
