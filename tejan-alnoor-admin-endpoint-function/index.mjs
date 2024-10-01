@@ -10,6 +10,7 @@ import {
   SPREADSHEET_ID,
 } from "./googleApi.mjs";
 import { getStudentsSheetRows } from "./services.mjs";
+import { validateToken } from "./auth.mjs";
 
 let secrets = undefined;
 const awsSecretsClient = new SecretsManagerClient({
@@ -58,6 +59,13 @@ export const handler = async (event) => {
   const path = event.rawPath || event.requestContext.http.path;
   const origin = event.headers.origin;
 
+  try {
+    await validateToken(event.headers.authorization);
+  } catch (error) {
+    console.error(error);
+    return buildResponse(error.status ?? 500, error.message);
+  }
+
   if (httpMethod === "OPTIONS") {
     console.log("OPTIONS");
     return buildResponse(200, "OK");
@@ -68,12 +76,6 @@ export const handler = async (event) => {
   }
 
   await initPromise;
-
-  // const token = queryParams["token"];
-
-  // if (token !== secrets["access-token"]) {
-  //   return buildResponse( 401, "Unauthorized");
-  // }
 
   if (!path.startsWith("/students")) {
     return buildResponse(404, "Not Found");

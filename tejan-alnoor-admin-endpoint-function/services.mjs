@@ -85,7 +85,6 @@ export async function getStudentsSheetRows() {
         student
       );
 
-      console.log("studentStartWeek", studentStartWeek);
       const revisitSummary = studentLevel.weeksPlan
         .slice(studentStartWeek - 1, studentStartWeek - 1 + 12)
         .map((week) => {
