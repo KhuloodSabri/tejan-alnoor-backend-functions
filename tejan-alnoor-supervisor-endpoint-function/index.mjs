@@ -85,11 +85,11 @@ export const handler = async (event) => {
       return buildResponse(200, students);
     }
 
-    if (path.split("/").length !== 3 || isNaN(Number(path.split("/")[2]))) {
+    if (path.split("/").length !== 3) {
       return buildResponse(404, "Not Found");
     }
 
-    const studentID = Number(path.split("/")[2]);
+    const studentID = path.split("/")[2];
     const student = await getStudentByID(studentID);
 
     if (!student) {
@@ -104,12 +104,12 @@ export const handler = async (event) => {
     return buildResponse(400, "Bad Request");
   }
 
-  if (path.split("/") < 3 || isNaN(Number(path.split("/")[2]))) {
+  if (path.split("/") < 3) {
     console.log("Path is invalid " + path);
     return buildResponse(400, "Bad Request");
   }
 
-  const studentID = Number(path.split("/")[2]);
+  const studentID = path.split("/")[2];
 
   try {
     validateUpdateStudentRequest(studentID, body);

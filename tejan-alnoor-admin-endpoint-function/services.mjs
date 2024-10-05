@@ -79,6 +79,7 @@ export async function getStudentsSheetRows() {
   const studentsRows = students
     .sort((a, b) => a.studentID - b.studentID)
     .map((student) => {
+      console.log("mapping student", student);
       const studentLevel = levelsMap[student.levelID];
       const studentStartWeek = getStudentStartWeek(
         currentSemesterDetails,

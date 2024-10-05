@@ -9,6 +9,7 @@ import {
   DeleteCommand,
   PutCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { waitForTableToBecomeActive } from "../utils.mjs";
 
 export const description = "move supervisors to a new table";
 
@@ -27,6 +28,8 @@ export async function up(client) {
   });
 
   await client.send(createSupervisorsCommand);
+
+  await waitForTableToBecomeActive(client, "Supervisors");
 
   const students =
     (

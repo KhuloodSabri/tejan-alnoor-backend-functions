@@ -6,7 +6,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import fs from "fs";
-import readline from "readline";
+import { promptUser } from "./utils.mjs";
 
 function getVersions() {
   const files = fs.readdirSync("./versions");
@@ -166,15 +166,14 @@ async function run(env, targetVersion) {
 
   console.log("\n");
 
-  //   const rl = readline.createInterface({
-  //     input: process.stdin,
-  //     output: process.stdout,
-  //   });
+  const promptResult = await promptUser(
+    "Do you want to continue. Enter yes to continue "
+  );
 
-  //   rl.question("Press Enter to continue... ", () => {
-  //     // Close the readline interface
-  //     rl.close();
-  //   });
+  if (promptResult !== "yes") {
+    console.log("Exiting...");
+    return;
+  }
 
   for (const migration of migrationsToRun) {
     console.log(`${direction}grading migration ${migration}...\n`);

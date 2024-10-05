@@ -5,6 +5,7 @@ import {
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import csv from "csv-parser";
 import fs from "fs";
+import { waitForTableToBecomeActive } from "../utils.mjs";
 
 export const description =
   "Initial migration, this is already in prod, but needed for local";
@@ -20,6 +21,8 @@ export async function up(client) {
   };
   const levelsCommand = new CreateTableCommand(levelTableParams);
   let result = await client.send(levelsCommand);
+
+  await waitForTableToBecomeActive(client, "Levels");
   console.log("Levels table created successfully");
 
   const studentTableParams = {
@@ -33,6 +36,8 @@ export async function up(client) {
 
   const studentCommand = new CreateTableCommand(studentTableParams);
   result = await client.send(studentCommand);
+
+  await waitForTableToBecomeActive(client, "Students");
   console.log("Students table created successfully");
 
   const awsDocDynamoDbClient = DynamoDBDocumentClient.from(client);
