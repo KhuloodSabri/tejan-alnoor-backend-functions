@@ -4,6 +4,7 @@ import {
   GetCommand,
   DynamoDBDocumentClient,
   UpdateCommand,
+  BatchGetCommand,
 } from "@aws-sdk/lib-dynamodb";
 
 const awsDynamoDbClient =
@@ -51,8 +52,8 @@ async function getStudentStartWeek(student) {
   return monthsSinceJoin * 4 + 1;
 }
 
-export async function getRegularStudents() {
-  return (
+export async function getActiveStudents() {
+  const activeStudents =
     (
       await awsDocDynamoDbClient.send(
         new ScanCommand({
@@ -65,11 +66,48 @@ export async function getRegularStudents() {
             ":status": "منتظم/ة", // Only retrieve items where status is 'active'
           },
           ProjectionExpression:
-            "studentID, studentName, levelID, supervisorName, gender",
+            "studentID, studentName, levelID, supervisorID, gender",
         })
       )
-    )?.Items ?? []
-  );
+    )?.Items ?? [];
+
+  const supervisorIds = [
+    ...new Set(activeStudents.map((student) => student.supervisorID)),
+  ];
+
+  let supervisorsMap = {};
+
+  for (let i = 0; i < supervisorIds.length; i += 100) {
+    const supervisorIdsBatch = supervisorIds.slice(i, i + 100);
+    console.log("supervisorIdsBatch", supervisorIdsBatch);
+    const supervisorsBatch =
+      (
+        await awsDocDynamoDbClient.send(
+          new BatchGetCommand({
+            RequestItems: {
+              Supervisors: {
+                Keys: supervisorIdsBatch.map((supervisorID) => ({
+                  supervisorID,
+                })),
+              },
+            },
+          })
+        )
+      )?.Responses?.Supervisors ?? [];
+
+    supervisorsMap = {
+      ...supervisorsMap,
+      ...supervisorsBatch.reduce((acc, supervisor) => {
+        acc[supervisor.supervisorID] = supervisor;
+        return acc;
+      }, {}),
+    };
+  }
+
+  return activeStudents.map((student) => ({
+    ...student,
+    supervisorName: supervisorsMap[student.supervisorID]?.supervisorName,
+  }));
 }
 
 export async function getStudentByID(studentID) {
@@ -108,6 +146,18 @@ export async function getStudentByID(studentID) {
       )
     )?.Item ?? {};
 
+  const studentSupervisor =
+    (
+      await awsDocDynamoDbClient.send(
+        new GetCommand({
+          TableName: "Supervisors",
+          Key: {
+            supervisorID: student.supervisorID,
+          },
+        })
+      )
+    )?.Item ?? {};
+
   return {
     ...student,
     levelName: studentLevel.levelName,
@@ -117,6 +167,7 @@ export async function getStudentByID(studentID) {
       studentLevel.weeksPlan[3]?.[0] ??
       studentLevel.weeksPlan[2]?.[0] ??
       studentLevel.weeksPlan[1]?.[0],
+    supervisorName: studentSupervisor.supervisorName,
   };
 }
 

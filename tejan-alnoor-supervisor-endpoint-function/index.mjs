@@ -4,7 +4,7 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 
 import {
-  getRegularStudents,
+  getActiveStudents,
   getStudentByID,
   validateUpdateStudentRequest,
   updateStudent,
@@ -81,7 +81,7 @@ export const handler = async (event) => {
 
   if (httpMethod === "GET") {
     if (path === "/students") {
-      const students = await getRegularStudents();
+      const students = await getActiveStudents();
       return buildResponse(200, students);
     }
 
