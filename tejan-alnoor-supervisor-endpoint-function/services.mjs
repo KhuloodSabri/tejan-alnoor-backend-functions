@@ -49,7 +49,8 @@ async function getStudentStartWeek(student) {
 
   monthsSinceJoin -= student.frozenSemesters.length * 7;
 
-  return monthsSinceJoin * 4 + 1;
+  // This case should not be hit
+  return Math.max(monthsSinceJoin * 4 + 1, 1);
 }
 
 export async function getActiveStudents() {

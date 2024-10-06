@@ -9,7 +9,12 @@ import {
   writeToGoogleSheet,
   SPREADSHEET_ID,
 } from "./googleApi.mjs";
-import { getStudentsSheetRows } from "./services.mjs";
+import {
+  createStudents,
+  getStudentsSheetRows,
+  validateStudents,
+  validateStudentsAgainstDB,
+} from "./services.mjs";
 import { validateToken } from "./auth.mjs";
 
 let secrets = undefined;
@@ -71,10 +76,6 @@ export const handler = async (event) => {
     return buildResponse(200, "OK");
   }
 
-  if (httpMethod !== "GET") {
-    return buildResponse(405, "Method Not Allowed");
-  }
-
   await initPromise;
 
   if (!path.startsWith("/students")) {
@@ -95,5 +96,27 @@ export const handler = async (event) => {
     return buildResponse(200, {
       spreadsheetId: SPREADSHEET_ID,
     });
+  }
+
+  if (httpMethod === "POST" && path === "/students") {
+    const validationErrors = validateStudents(body);
+
+    if (validationErrors.length > 0) {
+      return buildResponse(400, {
+        validationErrors,
+      });
+    }
+
+    try {
+      await validateStudentsAgainstDB(body);
+    } catch (error) {
+      console.error(error);
+      return buildResponse(500, {
+        validationErrors: [error.message],
+      });
+    }
+
+    await createStudents(body);
+    return buildResponse(200, {});
   }
 };

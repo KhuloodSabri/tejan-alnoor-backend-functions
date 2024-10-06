@@ -18,7 +18,7 @@ app.use("/", async (req, res) => {
   // Get the request body
   const body = req.body;
 
-  console.log("Request body:", body);
+  // console.log("Request body:", body);
 
   // Get the request path
   const path = req.path;

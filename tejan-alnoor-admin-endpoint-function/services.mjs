@@ -5,6 +5,7 @@ import {
   DynamoDBDocumentClient,
   BatchWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { v4 as uuidv4 } from "uuid";
 
 const awsDynamoDbClient =
   process.env.DEV === "true"
@@ -79,7 +80,6 @@ export async function getStudentsSheetRows() {
   const studentsRows = students
     .sort((a, b) => a.studentID - b.studentID)
     .map((student) => {
-      console.log("mapping student", student);
       const studentLevel = levelsMap[student.levelID];
       const studentStartWeek = getStudentStartWeek(
         currentSemesterDetails,
@@ -105,7 +105,7 @@ export async function getStudentsSheetRows() {
       ).fill("");
 
       return [
-        Number(student.studentID),
+        student.studentID,
         student.studentName,
         studentLevel.levelName,
         Math.floor(studentStartWeek / 4) + 1,
@@ -123,23 +123,343 @@ export async function getStudentsSheetRows() {
   return studentsRows;
 }
 
-export async function getStudentsCount() {
-  const params = {
-    TableName: "Students", // Replace with your table name
-    Select: "COUNT", // Retrieve only the item count
-  };
+export function validateStudents(students) {
+  const errors = [];
+  students.forEach((student, index) => {
+    if (!student.studentName) {
+      errors.push(`الطالب/ة الصف ${index + 2} لا يحتوي على اسم`);
+    }
 
-  const command = new ScanCommand(params);
-  const data = await awsDocDynamoDbClient.send(command);
-  return data.Count;
+    if (!student.gender) {
+      errors.push(
+        `الطالب/ة ${student.studentName} في الصف ${
+          index + 2
+        } لا يحتوي على الجنس`
+      );
+    } else if (student.gender !== "ذكر" && student.gender !== "أنثى") {
+      errors.push(
+        `الطالب/ة ${student.studentName} في الصف ${
+          index + 2
+        } لديه جنس غير صحيح - يجب أن يكون ذكر أو أنثى`
+      );
+    }
+
+    if (!student.supervisorName) {
+      errors.push(
+        `الطالب/ة ${student.studentName} في الصف ${
+          index + 2
+        } لا يحتوي على اسم المشرف/ة`
+      );
+    }
+
+    if (!student.level) {
+      errors.push(
+        `الطالب/ة ${student.studentName} في الصف ${
+          index + 2
+        } لا يحتوي على المستوى`
+      );
+    }
+
+    if (!student.groupNumber) {
+      errors.push(
+        `الطالب/ة ${student.studentName} في الصف ${
+          index + 2
+        } لا يحتوي على الدفعة`
+      );
+    } else if (isNaN(Number(student.groupNumber))) {
+      errors.push(
+        `دفعة الطالب ${student.studentName} في الصف ${index + 2} ليست رقما`
+      );
+    }
+
+    if (!student.joinYear) {
+      errors.push(
+        `الطالب/ة ${student.studentName} في الصف ${
+          index + 2
+        } لا يحتوي على سنة الانضمام`
+      );
+    } else {
+      const year = Number(student.joinYear);
+      if (isNaN(year)) {
+        errors.push(
+          `سنة الانضمام للطالب/ة ${student.studentName} في الصف ${
+            index + 2
+          } ليست رقما`
+        );
+      } else if (year < 2020) {
+        errors.push(
+          `الطالب/ة ${student.studentName} في الصف ${
+            index + 2
+          } لديه سنة انضمام قديمة`
+        );
+      }
+    }
+
+    if (!student.joinSemester) {
+      errors.push(
+        `الطالب/ة ${student.studentName} في الصف ${
+          index + 2
+        } لا يحتوي على فصل الانضمام`
+      );
+    } else {
+      const semester = Number(student.joinSemester);
+      if (isNaN(semester)) {
+        errors.push(
+          `فصل الانضمام للطالب/ة ${student.studentName} في الصف ${
+            index + 2
+          } ليست رقما`
+        );
+      } else if (semester < 1 || semester > 3) {
+        errors.push(
+          `الطالب/ة ${student.studentName} في الصف ${
+            index + 2
+          } لديه فصل انضمام غير صحيح - يجب أن يكون 1 أو 2 أو 3`
+        );
+      }
+    }
+
+    if (!student.joinMonth) {
+      errors.push(
+        `الطالب/ة ${student.studentName} في الصف ${
+          index + 2
+        } لا يحتوي على شهر الانضمام`
+      );
+    } else {
+      const month = Number(student.joinMonth);
+      if (isNaN(month)) {
+        errors.push(
+          `شهر الانضمام للطالب/ة ${student.studentName} في الصف ${
+            index + 2
+          } ليست رقما`
+        );
+      } else {
+        const maxMonth = Number(student.joinSemester) === 3 ? 1 : 3;
+        const hint =
+          Number(student.joinSemester) === 3
+            ? "هناك شهر واحد بالفصل الصيفي"
+            : "هناك 3 أشهر بالفصل العادي";
+
+        if (month < 1 || month > maxMonth) {
+          errors.push(
+            `الطالب/ة ${student.studentName} في الصف ${
+              index + 2
+            } لديه شهر انضمام غير صحيح - ${hint}`
+          );
+        }
+      }
+    }
+
+    if (student.phoneNumber) {
+      if (isNaN(Number(student.phoneNumber))) {
+        errors.push(
+          `رقم الهاتف للطالب/ة ${student.studentName} في الصف ${
+            index + 2
+          } ليست رقما`
+        );
+      } else if (
+        `${student.phoneNumber}`.length !== 10 &&
+        `${student.phoneNumber}`.length !== 7
+      ) {
+        errors.push(
+          `رقم الهاتف للطالب/ة ${student.studentName} في الصف ${
+            index + 2
+          } يجب أن يكون 7 أرقام أو 10 رقما (مع الكود الدولي)`
+        );
+      }
+    }
+  });
+
+  const namesCount = students.reduce((acc, student) => {
+    if (!student.studentName?.trim()) return acc;
+
+    return {
+      ...acc,
+      [student.studentName]: (acc[student.studentName] || 0) + 1,
+    };
+  }, {});
+
+  Object.entries(namesCount).forEach(([student, count]) => {
+    if (count > 1) {
+      errors.push(`الطالب/ة ${student} مكرر في الملف`);
+    }
+  });
+
+  const phoneNumbersCount = students.reduce((acc, student) => {
+    console.log(student);
+    if (!`${student.phoneNumber ?? ""}`?.trim()) return acc;
+
+    return {
+      ...acc,
+      [student.phoneNumber]: (acc[student.phoneNumber] || 0) + 1,
+    };
+  }, {});
+
+  Object.entries(phoneNumbersCount).forEach(([phoneNumber, count]) => {
+    if (count > 1) {
+      errors.push(`رقم الهاتف ${phoneNumber} مكرر في الملف`);
+    }
+  }, {});
+
+  return errors;
 }
 
-// In progress
-export async function createStudents(students) {
+const getQueryListPlaceholders = (itemName, list) => {
+  const query = Array.from(
+    { length: list.length },
+    (_, i) => `:${itemName}${i}`
+  ).join(", ");
+
+  const queryValues = list.reduce((acc, item, index) => {
+    acc[`:${itemName}${index}`] = item;
+    return acc;
+  }, {});
+
+  return { query, queryValues };
+};
+
+export async function validateStudentsAgainstDB(students) {
+  const levelNames = [...new Set(students.map((student) => student.level))];
+  const levelListQueryPlaceholders = getQueryListPlaceholders(
+    "levelName",
+    levelNames
+  );
+
+  const levels =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Levels",
+          FilterExpression: `#levelName IN (${levelListQueryPlaceholders.query})`,
+          ExpressionAttributeNames: {
+            "#levelName": "levelName",
+          },
+          ExpressionAttributeValues: {
+            ...levelListQueryPlaceholders.queryValues,
+          },
+        })
+      )
+    )?.Items ?? [];
+
+  if (levels.length < levelNames.length) {
+    const missingLevels = levelNames.filter(
+      (levelName) => !levels.find((level) => level.levelName === levelName)
+    );
+
+    throw new Error(
+      `المستويات المدخلة غير موجودة في قاعدة البيانات - ${missingLevels.join(
+        "، "
+      )}`
+    );
+  }
+
+  const studentNames = students.map((student) => student.studentName);
+  const studentListQueryPlaceholders = getQueryListPlaceholders(
+    "studentName",
+    studentNames
+  );
+
+  const existingStudents =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Students",
+          FilterExpression: `#studentName IN (${studentListQueryPlaceholders.query})`,
+          ExpressionAttributeNames: {
+            "#studentName": "studentName",
+          },
+          ExpressionAttributeValues: {
+            ...studentListQueryPlaceholders.queryValues,
+          },
+        })
+      )
+    )?.Items ?? [];
+
+  if (existingStudents.length) {
+    const existingStudentNames = existingStudents.map(
+      (student) => student.studentName
+    );
+
+    throw new Error(
+      `بعض الطلاب موجودين في قاعدة البيانات - ${existingStudentNames.join(
+        "، "
+      )}`
+    );
+  }
+
+  const phoneNumbers = students
+    .map((student) => student.phoneNumber)
+    .filter((phoneNumber) => !!`${phoneNumber ?? ""}`.trim().length);
+
+  const phonNumbersListQueryPlaceholders = getQueryListPlaceholders(
+    "phoneNumber",
+    phoneNumbers
+  );
+
+  const existingPhoneNumbers =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Students",
+          FilterExpression: `#phoneNumber IN (${phonNumbersListQueryPlaceholders.query})`,
+          ExpressionAttributeNames: {
+            "#phoneNumber": "phoneNumber",
+          },
+          ExpressionAttributeValues: {
+            ...phonNumbersListQueryPlaceholders.queryValues,
+          },
+        })
+      )
+    )?.Items ?? [];
+
+  if (existingPhoneNumbers.length) {
+    const existingPhoneNumbersList = existingPhoneNumbers.map(
+      (student) => student.phoneNumber
+    );
+
+    throw new Error(
+      `بعض أرقام الهاتف موجودة في قاعدة البيانات - ${existingPhoneNumbersList.join(
+        "، "
+      )}`
+    );
+  }
+}
+
+async function createSupervisors(newSupervisors) {
+  const maxBatchSize = 25;
+  const supervisorsChunks = [];
+  const notInsertedSupervisors = [];
+
+  for (let i = 0; i < newSupervisors.length; i += maxBatchSize) {
+    supervisorsChunks.push(newSupervisors.slice(i, i + maxBatchSize));
+  }
+
+  for (const chunk of supervisorsChunks) {
+    const response = await awsDocDynamoDbClient.send(
+      new BatchWriteCommand({
+        RequestItems: {
+          Supervisors: chunk.map((supervisor) => ({
+            PutRequest: {
+              Item: supervisor,
+            },
+          })),
+        },
+      })
+    );
+
+    console.log("response", response);
+
+    notInsertedSupervisors.push(
+      ...(response.UnprocessedItems?.Supervisors ?? [])
+    );
+  }
+
+  return notInsertedSupervisors;
+}
+
+async function insertStudentsHelper(students) {
   const maxBatchSize = 25;
   const studentsChunks = [];
-  const unprocessedItems = [];
-
+  const notInsertedStudents = [];
   for (let i = 0; i < students.length; i += maxBatchSize) {
     studentsChunks.push(students.slice(i, i + maxBatchSize));
   }
@@ -157,8 +477,139 @@ export async function createStudents(students) {
       })
     );
 
-    unprocessedItems.push(...(response.UnprocessedItems ?? []));
+    notInsertedStudents.push(...(response.UnprocessedItems?.Students ?? []));
   }
 
-  console.log("unprocessedItems", unprocessedItems);
+  return notInsertedStudents;
+}
+
+export async function createStudents(students) {
+  const levelsNames = [...new Set(students.map((student) => student.level))];
+  const levelListQueryPlaceholders = getQueryListPlaceholders(
+    "levelName",
+    levelsNames
+  );
+
+  const levels =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Levels",
+          FilterExpression: `#levelName IN (${levelListQueryPlaceholders.query})`,
+          ExpressionAttributeNames: {
+            "#levelName": "levelName",
+          },
+          ExpressionAttributeValues: {
+            ...levelListQueryPlaceholders.queryValues,
+          },
+        })
+      )
+    )?.Items ?? [];
+
+  const levelsMap = levels.reduce((acc, level) => {
+    acc[level.levelName] = level.levelID;
+    return acc;
+  }, {});
+
+  const supervisorsNames = [
+    ...new Set(students.map((student) => student.supervisorName)),
+  ];
+
+  const supervisorListQueryPlaceholders = getQueryListPlaceholders(
+    "supervisorName",
+    supervisorsNames
+  );
+
+  const existingSupervisors =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Supervisors",
+          FilterExpression: `#supervisorName IN (${supervisorListQueryPlaceholders.query})`,
+          ExpressionAttributeNames: {
+            "#supervisorName": "supervisorName",
+          },
+          ExpressionAttributeValues: {
+            ...supervisorListQueryPlaceholders.queryValues,
+          },
+        })
+      )
+    )?.Items ?? [];
+
+  const newSupervisors = supervisorsNames
+    .filter(
+      (supervisorName) =>
+        !existingSupervisors.find(
+          (supervisor) => supervisor.supervisorName === supervisorName
+        )
+    )
+    .map((supervisorName) => ({
+      supervisorID: uuidv4(),
+      supervisorName,
+    }));
+
+  let supevisorsToInsert = newSupervisors;
+  let retry = 0;
+
+  while (supevisorsToInsert.length > 0) {
+    supevisorsToInsert = await createSupervisors(supevisorsToInsert);
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    if (retry > 3) {
+      throw new Error("Failed to insert supervisors");
+    }
+
+    retry++;
+  }
+
+  const supervisorsMap = {
+    ...newSupervisors.reduce((acc, supervisor) => {
+      acc[supervisor.supervisorName] = supervisor.supervisorID;
+      return acc;
+    }, {}),
+    ...existingSupervisors.reduce((acc, supervisor) => {
+      acc[supervisor.supervisorName] = supervisor.supervisorID;
+      return acc;
+    }, {}),
+  };
+
+  const newStudents = students.map((student) => ({
+    studentID: uuidv4(),
+    studentName: student.studentName,
+    levelID: levelsMap[student.level],
+    supervisorID: supervisorsMap[student.supervisorName],
+    grouNumber: Number(student.groupNumber),
+    joinTime: {
+      year: Number(student.joinYear),
+      semester: Number(student.joinSemester),
+      semesterMonth: Number(student.joinMonth),
+    },
+    gender: student.gender === "ذكر" ? "male" : "female",
+    phoneNumber: student.phoneNumber,
+    status: "منتظم/ة",
+    memorizingProgress: 0,
+    revisitProgress: [],
+    frozenSemesters: [],
+    test1: 0,
+    test2: 0,
+    test3: 0,
+    test4: 0,
+    test5: 0,
+  }));
+
+  let studentsToInsert = newStudents;
+  retry = 0;
+
+  while (studentsToInsert.length > 0) {
+    studentsToInsert = await insertStudentsHelper(studentsToInsert);
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    if (retry > 3) {
+      throw new Error("Failed to insert students");
+    }
+
+    retry++;
+  }
 }
