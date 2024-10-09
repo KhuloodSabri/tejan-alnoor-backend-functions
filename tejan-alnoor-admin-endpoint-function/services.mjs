@@ -6,6 +6,7 @@ import {
   BatchWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
+import { translateNumberToArabic } from "./number.mjs";
 
 const awsDynamoDbClient =
   process.env.DEV === "true"
@@ -258,12 +259,13 @@ export function validateStudents(students) {
         );
       } else if (
         `${student.phoneNumber}`.length !== 10 &&
-        `${student.phoneNumber}`.length !== 7
+        `${student.phoneNumber}`.length !== 12 &&
+        `${student.phoneNumber}`.length !== 14
       ) {
         errors.push(
           `رقم الهاتف للطالب/ة ${student.studentName} في الصف ${
             index + 2
-          } يجب أن يكون 7 أرقام أو 10 رقما (مع الكود الدولي)`
+          } يجب أن يكون 10 أرقام أو 12 أو 14 رقما (مع الكود الدولي)`
         );
       }
     }
@@ -285,7 +287,6 @@ export function validateStudents(students) {
   });
 
   const phoneNumbersCount = students.reduce((acc, student) => {
-    console.log(student);
     if (!`${student.phoneNumber ?? ""}`?.trim()) return acc;
 
     return {
@@ -306,8 +307,8 @@ export function validateStudents(students) {
 const getQueryListPlaceholders = (itemName, list) => {
   const query = Array.from(
     { length: list.length },
-    (_, i) => `:${itemName}${i}`
-  ).join(", ");
+    (_, i) => `#${itemName} = :${itemName}${i}`
+  ).join(" OR ");
 
   const queryValues = list.reduce((acc, item, index) => {
     acc[`:${itemName}${index}`] = item;
@@ -318,7 +319,11 @@ const getQueryListPlaceholders = (itemName, list) => {
 };
 
 export async function validateStudentsAgainstDB(students) {
-  const levelNames = [...new Set(students.map((student) => student.level))];
+  const levelNames = [
+    ...new Set(
+      students.map((student) => translateNumberToArabic(student.level))
+    ),
+  ];
   const levelListQueryPlaceholders = getQueryListPlaceholders(
     "levelName",
     levelNames
@@ -329,7 +334,7 @@ export async function validateStudentsAgainstDB(students) {
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Levels",
-          FilterExpression: `#levelName IN (${levelListQueryPlaceholders.query})`,
+          FilterExpression: levelListQueryPlaceholders.query,
           ExpressionAttributeNames: {
             "#levelName": "levelName",
           },
@@ -363,7 +368,7 @@ export async function validateStudentsAgainstDB(students) {
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Students",
-          FilterExpression: `#studentName IN (${studentListQueryPlaceholders.query})`,
+          FilterExpression: studentListQueryPlaceholders.query,
           ExpressionAttributeNames: {
             "#studentName": "studentName",
           },
@@ -390,7 +395,7 @@ export async function validateStudentsAgainstDB(students) {
     .map((student) => student.phoneNumber)
     .filter((phoneNumber) => !!`${phoneNumber ?? ""}`.trim().length);
 
-  const phonNumbersListQueryPlaceholders = getQueryListPlaceholders(
+  const phoneNumbersListQueryPlaceholders = getQueryListPlaceholders(
     "phoneNumber",
     phoneNumbers
   );
@@ -400,12 +405,12 @@ export async function validateStudentsAgainstDB(students) {
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Students",
-          FilterExpression: `#phoneNumber IN (${phonNumbersListQueryPlaceholders.query})`,
+          FilterExpression: phoneNumbersListQueryPlaceholders.query,
           ExpressionAttributeNames: {
             "#phoneNumber": "phoneNumber",
           },
           ExpressionAttributeValues: {
-            ...phonNumbersListQueryPlaceholders.queryValues,
+            ...phoneNumbersListQueryPlaceholders.queryValues,
           },
         })
       )
@@ -445,8 +450,6 @@ async function createSupervisors(newSupervisors) {
         },
       })
     );
-
-    console.log("response", response);
 
     notInsertedSupervisors.push(
       ...(response.UnprocessedItems?.Supervisors ?? [])
@@ -495,7 +498,7 @@ export async function createStudents(students) {
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Levels",
-          FilterExpression: `#levelName IN (${levelListQueryPlaceholders.query})`,
+          FilterExpression: levelListQueryPlaceholders.query,
           ExpressionAttributeNames: {
             "#levelName": "levelName",
           },
@@ -525,7 +528,7 @@ export async function createStudents(students) {
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Supervisors",
-          FilterExpression: `#supervisorName IN (${supervisorListQueryPlaceholders.query})`,
+          FilterExpression: supervisorListQueryPlaceholders.query,
           ExpressionAttributeNames: {
             "#supervisorName": "supervisorName",
           },
@@ -586,7 +589,7 @@ export async function createStudents(students) {
       semesterMonth: Number(student.joinMonth),
     },
     gender: student.gender === "ذكر" ? "male" : "female",
-    phoneNumber: student.phoneNumber,
+    phoneNumber: `${student.phoneNumber}`,
     status: "منتظم/ة",
     memorizingProgress: 0,
     revisitProgress: [],
