@@ -318,6 +318,68 @@ const getQueryListPlaceholders = (itemName, list) => {
   return { query, queryValues };
 };
 
+async function getExistingStudents(students) {
+  const chunSize = 100;
+  let existingStudents = [];
+
+  const studentNames = students.map((student) => student.studentName);
+  const phoneNumbers = students
+    .map((student) => student.phoneNumber)
+    .filter((phoneNumber) => !!`${phoneNumber ?? ""}`.trim().length);
+
+  for (let i = 0; i < studentNames.length; i += chunSize) {
+    const studentListQueryPlaceholders = getQueryListPlaceholders(
+      "studentName",
+      studentNames.slice(i, i + chunSize)
+    );
+
+    const existingStudentsChunk =
+      (
+        await awsDocDynamoDbClient.send(
+          new ScanCommand({
+            TableName: "Students",
+            FilterExpression: studentListQueryPlaceholders.query,
+            ExpressionAttributeNames: {
+              "#studentName": "studentName",
+            },
+            ExpressionAttributeValues: {
+              ...studentListQueryPlaceholders.queryValues,
+            },
+          })
+        )
+      )?.Items ?? [];
+
+    existingStudents.push(...existingStudentsChunk);
+  }
+
+  for (let i = 0; i < phoneNumbers.length; i += chunSize) {
+    const phoneNumbersListQueryPlaceholders = getQueryListPlaceholders(
+      "phoneNumber",
+      phoneNumbers
+    );
+
+    const existingStudentsChunk =
+      (
+        await awsDocDynamoDbClient.send(
+          new ScanCommand({
+            TableName: "Students",
+            FilterExpression: phoneNumbersListQueryPlaceholders.query,
+            ExpressionAttributeNames: {
+              "#phoneNumber": "phoneNumber",
+            },
+            ExpressionAttributeValues: {
+              ...phoneNumbersListQueryPlaceholders.queryValues,
+            },
+          })
+        )
+      )?.Items ?? [];
+
+    existingStudents.push(...existingStudentsChunk);
+  }
+
+  return existingStudents;
+}
+
 export async function validateStudentsAgainstDB(students) {
   const levelNames = [
     ...new Set(
@@ -357,76 +419,76 @@ export async function validateStudentsAgainstDB(students) {
     );
   }
 
-  const studentNames = students.map((student) => student.studentName);
-  const studentListQueryPlaceholders = getQueryListPlaceholders(
-    "studentName",
-    studentNames
-  );
+  // const studentNames = students.map((student) => student.studentName);
+  // const studentListQueryPlaceholders = getQueryListPlaceholders(
+  //   "studentName",
+  //   studentNames
+  // );
 
-  const existingStudents =
-    (
-      await awsDocDynamoDbClient.send(
-        new ScanCommand({
-          TableName: "Students",
-          FilterExpression: studentListQueryPlaceholders.query,
-          ExpressionAttributeNames: {
-            "#studentName": "studentName",
-          },
-          ExpressionAttributeValues: {
-            ...studentListQueryPlaceholders.queryValues,
-          },
-        })
-      )
-    )?.Items ?? [];
+  // const existingStudents =
+  //   (
+  //     await awsDocDynamoDbClient.send(
+  //       new ScanCommand({
+  //         TableName: "Students",
+  //         FilterExpression: studentListQueryPlaceholders.query,
+  //         ExpressionAttributeNames: {
+  //           "#studentName": "studentName",
+  //         },
+  //         ExpressionAttributeValues: {
+  //           ...studentListQueryPlaceholders.queryValues,
+  //         },
+  //       })
+  //     )
+  //   )?.Items ?? [];
 
-  if (existingStudents.length) {
-    const existingStudentNames = existingStudents.map(
-      (student) => student.studentName
-    );
+  // if (existingStudents.length) {
+  //   const existingStudentNames = existingStudents.map(
+  //     (student) => student.studentName
+  //   );
 
-    throw new Error(
-      `بعض الطلاب موجودين في قاعدة البيانات - ${existingStudentNames.join(
-        "، "
-      )}`
-    );
-  }
+  //   throw new Error(
+  //     `بعض الطلاب موجودين في قاعدة البيانات - ${existingStudentNames.join(
+  //       "، "
+  //     )}`
+  //   );
+  // }
 
-  const phoneNumbers = students
-    .map((student) => student.phoneNumber)
-    .filter((phoneNumber) => !!`${phoneNumber ?? ""}`.trim().length);
+  // const phoneNumbers = students
+  //   .map((student) => student.phoneNumber)
+  //   .filter((phoneNumber) => !!`${phoneNumber ?? ""}`.trim().length);
 
-  const phoneNumbersListQueryPlaceholders = getQueryListPlaceholders(
-    "phoneNumber",
-    phoneNumbers
-  );
+  // const phoneNumbersListQueryPlaceholders = getQueryListPlaceholders(
+  //   "phoneNumber",
+  //   phoneNumbers
+  // );
 
-  const existingPhoneNumbers =
-    (
-      await awsDocDynamoDbClient.send(
-        new ScanCommand({
-          TableName: "Students",
-          FilterExpression: phoneNumbersListQueryPlaceholders.query,
-          ExpressionAttributeNames: {
-            "#phoneNumber": "phoneNumber",
-          },
-          ExpressionAttributeValues: {
-            ...phoneNumbersListQueryPlaceholders.queryValues,
-          },
-        })
-      )
-    )?.Items ?? [];
+  // const existingPhoneNumbers =
+  //   (
+  //     await awsDocDynamoDbClient.send(
+  //       new ScanCommand({
+  //         TableName: "Students",
+  //         FilterExpression: phoneNumbersListQueryPlaceholders.query,
+  //         ExpressionAttributeNames: {
+  //           "#phoneNumber": "phoneNumber",
+  //         },
+  //         ExpressionAttributeValues: {
+  //           ...phoneNumbersListQueryPlaceholders.queryValues,
+  //         },
+  //       })
+  //     )
+  //   )?.Items ?? [];
 
-  if (existingPhoneNumbers.length) {
-    const existingPhoneNumbersList = existingPhoneNumbers.map(
-      (student) => student.phoneNumber
-    );
+  // if (existingPhoneNumbers.length) {
+  //   const existingPhoneNumbersList = existingPhoneNumbers.map(
+  //     (student) => student.phoneNumber
+  //   );
 
-    throw new Error(
-      `بعض أرقام الهاتف موجودة في قاعدة البيانات - ${existingPhoneNumbersList.join(
-        "، "
-      )}`
-    );
-  }
+  //   throw new Error(
+  //     `بعض أرقام الهاتف موجودة في قاعدة البيانات - ${existingPhoneNumbersList.join(
+  //       "، "
+  //     )}`
+  //   );
+  // }
 }
 
 async function createSupervisors(newSupervisors) {
@@ -487,7 +549,12 @@ async function insertStudentsHelper(students) {
 }
 
 export async function createStudents(students) {
-  const levelsNames = [...new Set(students.map((student) => student.level))];
+  const levelsNames = [
+    ...new Set(
+      students.map((student) => translateNumberToArabic(student.level))
+    ),
+  ];
+
   const levelListQueryPlaceholders = getQueryListPlaceholders(
     "levelName",
     levelsNames
@@ -499,6 +566,7 @@ export async function createStudents(students) {
         new ScanCommand({
           TableName: "Levels",
           FilterExpression: levelListQueryPlaceholders.query,
+          ProjectionExpression: "levelID, levelName",
           ExpressionAttributeNames: {
             "#levelName": "levelName",
           },
@@ -577,29 +645,40 @@ export async function createStudents(students) {
     }, {}),
   };
 
-  const newStudents = students.map((student) => ({
-    studentID: uuidv4(),
-    studentName: student.studentName,
-    levelID: levelsMap[student.level],
-    supervisorID: supervisorsMap[student.supervisorName],
-    grouNumber: Number(student.groupNumber),
-    joinTime: {
-      year: Number(student.joinYear),
-      semester: Number(student.joinSemester),
-      semesterMonth: Number(student.joinMonth),
-    },
-    gender: student.gender === "ذكر" ? "male" : "female",
-    phoneNumber: `${student.phoneNumber}`,
-    status: "منتظم/ة",
-    memorizingProgress: 0,
-    revisitProgress: [],
-    frozenSemesters: [],
-    test1: 0,
-    test2: 0,
-    test3: 0,
-    test4: 0,
-    test5: 0,
-  }));
+  const existingStudents = await getExistingStudents(students);
+
+  const newStudents = students
+    .filter(
+      (student) =>
+        !existingStudents.find(
+          (existingStudent) =>
+            existingStudent.studentName === student.studentName ||
+            existingStudent.phoneNumber === student.phoneNumber
+        )
+    )
+    .map((student) => ({
+      studentID: uuidv4(),
+      studentName: student.studentName,
+      levelID: levelsMap[translateNumberToArabic(student.level)],
+      supervisorID: supervisorsMap[student.supervisorName],
+      grouNumber: Number(student.groupNumber),
+      joinTime: {
+        year: Number(student.joinYear),
+        semester: Number(student.joinSemester),
+        semesterMonth: Number(student.joinMonth),
+      },
+      gender: student.gender === "ذكر" ? "male" : "female",
+      phoneNumber: `${student.phoneNumber}`,
+      status: "منتظم/ة",
+      memorizingProgress: 0,
+      revisitProgress: [],
+      frozenSemesters: [],
+      test1: 0,
+      test2: 0,
+      test3: 0,
+      test4: 0,
+      test5: 0,
+    }));
 
   let studentsToInsert = newStudents;
   retry = 0;
@@ -614,5 +693,12 @@ export async function createStudents(students) {
     }
 
     retry++;
+  }
+
+  return {
+    newStudentsCount: newStudents.length - studentsToInsert.length,
+    existingStudentsCount: existingStudents.length,
+    failedToInsert: studentsToInsert,
+    existingStudents: existingStudents,
   }
 }

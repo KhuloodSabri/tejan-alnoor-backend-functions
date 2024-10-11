@@ -163,11 +163,11 @@ export async function getStudentByID(studentID) {
     ...student,
     levelName: studentLevel.levelName,
     progressUnit: studentLevel.progressUnit,
-    start: studentLevel.weeksPlan[0][0],
+    start: studentLevel.weeksPlan?.[0]?.[0],
     end:
-      studentLevel.weeksPlan[3]?.[0] ??
-      studentLevel.weeksPlan[2]?.[0] ??
-      studentLevel.weeksPlan[1]?.[0],
+      studentLevel.weeksPlan?.[3]?.[0] ??
+      studentLevel.weeksPlan?.[2]?.[0] ??
+      studentLevel.weeksPlan?.[1]?.[0],
     supervisorName: studentSupervisor.supervisorName,
   };
 }

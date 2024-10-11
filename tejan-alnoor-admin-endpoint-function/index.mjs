@@ -116,7 +116,7 @@ export const handler = async (event) => {
       });
     }
 
-    await createStudents(body);
-    return buildResponse(200, {});
+    const response = await createStudents(body);
+    return buildResponse(200, response);
   }
 };
