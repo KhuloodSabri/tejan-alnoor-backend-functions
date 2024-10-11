@@ -8,6 +8,7 @@ import {
   getStudentByID,
   validateUpdateStudentRequest,
   updateStudent,
+  getConfig,
 } from "./services.mjs";
 
 const SECRET_KEY = "tejan_al_noor";
@@ -74,6 +75,10 @@ export const handler = async (event) => {
   // if (token !== secrets["access-token"]) {
   //   return buildResponse( 401, "Unauthorized");
   // }
+
+  if (path === "/configs/currentSemester") {
+    return buildResponse(200, await getConfig("currentSemester"));
+  }
 
   if (!path.startsWith("/students")) {
     return buildResponse(404, "Not Found");

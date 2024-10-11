@@ -25,32 +25,19 @@ function findNaN(object, keys) {
   );
 }
 
-async function getStudentStartWeek(student) {
-  const currentSemesterDetails =
+export async function getConfig(configName) {
+  return (
     (
       await awsDocDynamoDbClient.send(
         new GetCommand({
           TableName: "Configs",
           Key: {
-            name: "currentSemester",
+            name: configName,
           },
         })
       )
-    )?.Item?.value ?? null;
-
-  const joinYear = student.joinTime.year;
-  const joinSemester = student.joinTime.semester;
-  const joinMonth = student.joinTime.semesterMonth;
-  let monthsSinceJoin = (currentSemesterDetails.year - joinYear) * 7;
-
-  monthsSinceJoin += (currentSemesterDetails.semester - 1) * 3; // 1 and 2 are 3 months
-  monthsSinceJoin -= (joinSemester - 1) * 3; // 1 and 2 are 3 months
-  monthsSinceJoin -= joinMonth - 1;
-
-  monthsSinceJoin -= student.frozenSemesters.length * 7;
-
-  // This case should not be hit
-  return Math.max(monthsSinceJoin * 4 + 1, 1);
+    )?.Item?.value ?? null
+  );
 }
 
 export async function getActiveStudents() {
@@ -128,7 +115,6 @@ export async function getStudentByID(studentID) {
   if (!student) {
     return null;
   }
-  const studentStartWeek = await getStudentStartWeek(student);
 
   const studentLevel =
     (
@@ -138,11 +124,7 @@ export async function getStudentByID(studentID) {
           Key: {
             levelID: student.levelID,
           },
-          ProjectionExpression: `levelName, progressUnit, weeksPlan[${
-            studentStartWeek - 1
-          }][0], weeksPlan[${studentStartWeek - 1 + 3}][1], weeksPlan[${
-            studentStartWeek - 1 + 7
-          }][1],weeksPlan[${studentStartWeek - 1 + 11}][1]`,
+          ProjectionExpression: `levelName, progressUnit, weeksPlan`,
         })
       )
     )?.Item ?? {};
@@ -163,11 +145,7 @@ export async function getStudentByID(studentID) {
     ...student,
     levelName: studentLevel.levelName,
     progressUnit: studentLevel.progressUnit,
-    start: studentLevel.weeksPlan?.[0]?.[0],
-    end:
-      studentLevel.weeksPlan?.[3]?.[0] ??
-      studentLevel.weeksPlan?.[2]?.[0] ??
-      studentLevel.weeksPlan?.[1]?.[0],
+    levelRevisitWeeksPlan: studentLevel.weeksPlan,
     supervisorName: studentSupervisor.supervisorName,
   };
 }
