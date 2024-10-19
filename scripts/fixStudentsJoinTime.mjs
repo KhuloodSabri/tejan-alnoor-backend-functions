@@ -17,7 +17,7 @@ function trimStringQuotes(str) {
   return res.trim();
 }
 
-async function restoreStudentsProgressFromCsv(awsDocDynamoDbClient) {
+async function fixStudentsJoinTime(awsDocDynamoDbClient) {
   const students =
     (
       await awsDocDynamoDbClient.send(
@@ -28,55 +28,46 @@ async function restoreStudentsProgressFromCsv(awsDocDynamoDbClient) {
     )?.Items ?? [];
 
   const processingFilePromise = new Promise((resolve, reject) => {
-    fs.createReadStream("C:/Users/hp/Downloads/Students-2024-10-5.csv")
+    fs.createReadStream(
+      "C:/Users/hp/Downloads/إضافة الطلاب على الموقع - Sheet1 (8).csv"
+    )
       .pipe(csv())
       .on("data", async (row) => {
-        if (!!row["studentName"]?.length) {
+        if (!!row["اسم الطالب/ة"]?.length) {
           const filteredStudents = students.filter((student) => {
             return (
               trimStringQuotes(student.studentName) ===
-              trimStringQuotes(row["studentName"])
+              trimStringQuotes(row["اسم الطالب/ة"])
             );
           });
 
           if (filteredStudents.length === 1) {
-            console.log("Processing student: ", row["studentName"]);
+            console.log("Processing student: ", row["اسم الطالب/ة"]);
             const updateCommand = new UpdateCommand({
               TableName: "Students",
               Key: {
                 studentID: filteredStudents[0].studentID,
               },
-              UpdateExpression:
-                "REMOVE revisionProgress SET #memorizingProgress = :memorizingProgress, #revisitProgress = :revisitProgress, #test1 = :test1, #test2 = :test2, #test3 = :test3, #test4 = :test4, #test5 = :test5",
+              UpdateExpression: "SET #joinTime = :joinTime",
               ExpressionAttributeNames: {
-                "#memorizingProgress": "memorizingProgress",
-                "#revisitProgress": "revisitProgress",
-                "#test1": "test1",
-                "#test2": "test2",
-                "#test3": "test3",
-                "#test4": "test4",
-                "#test5": "test5",
+                "#joinTime": "joinTime",
               },
               ExpressionAttributeValues: {
-                ":memorizingProgress": Number(row["memorizingProgress"]),
-                ":revisitProgress": JSON.parse(row["revisitProgress"]).map(
-                  (progress) => progress.L.map((item) => Number(item.N))
-                ),
-                ":test1": Number(row["test1"]),
-                ":test2": Number(row["test2"]),
-                ":test3": Number(row["test3"]),
-                ":test4": Number(row["test4"]),
-                ":test5": Number(row["test5"]),
+                ":joinTime": {
+                  year: 2024,
+                  semesterMonth: 1,
+                  semester: 1,
+                },
               },
             });
 
             await awsDocDynamoDbClient.send(updateCommand);
           } else if (filteredStudents.length === 0) {
-            console.error("Did not find: ", row["studentName"]);
+            console.error("Did not find: ", row["اسم الطالب/ة"]);
           } else {
             console.error(
               "Found multiple students: ",
-              row["studentName"],
+              row["اسم الطالب/ة"],
 
               filteredStudents.map((student) => student.studentID)
             );
@@ -104,7 +95,7 @@ export async function run() {
 
   const awsDocDynamoDbClient = DynamoDBDocumentClient.from(client);
 
-  await restoreStudentsProgressFromCsv(awsDocDynamoDbClient);
+  await fixStudentsJoinTime(awsDocDynamoDbClient);
 }
 
 run();

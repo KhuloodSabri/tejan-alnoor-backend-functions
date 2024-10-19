@@ -12,6 +12,7 @@ import {
 import {
   createStudents,
   getStudentsSheetRows,
+  updateStudents,
   validateStudents,
   validateStudentsAgainstDB,
 } from "./services.mjs";
@@ -119,4 +120,28 @@ export const handler = async (event) => {
     const response = await createStudents(body);
     return buildResponse(200, response);
   }
+
+  if (httpMethod === "PUT" && path === "/students") {
+    const validationErrors = validateStudents(body);
+
+    if (validationErrors.length > 0) {
+      return buildResponse(400, {
+        validationErrors,
+      });
+    }
+
+    try {
+      await validateStudentsAgainstDB(body);
+    } catch (error) {
+      console.error(error);
+      return buildResponse(500, {
+        validationErrors: [error.message],
+      });
+    }
+
+    const response = await updateStudents(body);
+    return buildResponse(200, response);
+  }
+
+  return buildResponse(404, "Not Found");
 };

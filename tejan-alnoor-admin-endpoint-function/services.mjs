@@ -20,6 +20,10 @@ const awsDynamoDbClient =
 
 const awsDocDynamoDbClient = DynamoDBDocumentClient.from(awsDynamoDbClient);
 
+function getSemesterMonthsCount(semester) {
+  return semester.semester === 1 || semester.semester === 2 ? 3 : 1;
+}
+
 function getStudentStartWeek(currentSemesterDetails, student) {
   const joinYear = student.joinTime.year;
   const joinSemester = student.joinTime.semester;
@@ -30,7 +34,16 @@ function getStudentStartWeek(currentSemesterDetails, student) {
   monthsSinceJoin -= (joinSemester - 1) * 3; // 1 and 2 are 3 months
   monthsSinceJoin -= joinMonth - 1;
 
-  monthsSinceJoin -= student.frozenSemesters.length * 7;
+  monthsSinceJoin -= student.frozenSemesters.reduce((acc, semester) => {
+    if (
+      semester.year >= currentSemesterDetails.year &&
+      semester.semester >= currentSemesterDetails.semester
+    ) {
+      return acc;
+    }
+
+    return acc + getSemesterMonthsCount(semester);
+  }, 0);
 
   return monthsSinceJoin * 4 + 1;
 }
@@ -377,7 +390,14 @@ async function getExistingStudents(students) {
     existingStudents.push(...existingStudentsChunk);
   }
 
-  return existingStudents;
+  return Object.values(
+    existingStudents.reduce((acc, student) => {
+      return {
+        ...acc,
+        [student.studentID]: student,
+      };
+    }, {})
+  );
 }
 
 export async function validateStudentsAgainstDB(students) {
@@ -418,77 +438,6 @@ export async function validateStudentsAgainstDB(students) {
       )}`
     );
   }
-
-  // const studentNames = students.map((student) => student.studentName);
-  // const studentListQueryPlaceholders = getQueryListPlaceholders(
-  //   "studentName",
-  //   studentNames
-  // );
-
-  // const existingStudents =
-  //   (
-  //     await awsDocDynamoDbClient.send(
-  //       new ScanCommand({
-  //         TableName: "Students",
-  //         FilterExpression: studentListQueryPlaceholders.query,
-  //         ExpressionAttributeNames: {
-  //           "#studentName": "studentName",
-  //         },
-  //         ExpressionAttributeValues: {
-  //           ...studentListQueryPlaceholders.queryValues,
-  //         },
-  //       })
-  //     )
-  //   )?.Items ?? [];
-
-  // if (existingStudents.length) {
-  //   const existingStudentNames = existingStudents.map(
-  //     (student) => student.studentName
-  //   );
-
-  //   throw new Error(
-  //     `بعض الطلاب موجودين في قاعدة البيانات - ${existingStudentNames.join(
-  //       "، "
-  //     )}`
-  //   );
-  // }
-
-  // const phoneNumbers = students
-  //   .map((student) => student.phoneNumber)
-  //   .filter((phoneNumber) => !!`${phoneNumber ?? ""}`.trim().length);
-
-  // const phoneNumbersListQueryPlaceholders = getQueryListPlaceholders(
-  //   "phoneNumber",
-  //   phoneNumbers
-  // );
-
-  // const existingPhoneNumbers =
-  //   (
-  //     await awsDocDynamoDbClient.send(
-  //       new ScanCommand({
-  //         TableName: "Students",
-  //         FilterExpression: phoneNumbersListQueryPlaceholders.query,
-  //         ExpressionAttributeNames: {
-  //           "#phoneNumber": "phoneNumber",
-  //         },
-  //         ExpressionAttributeValues: {
-  //           ...phoneNumbersListQueryPlaceholders.queryValues,
-  //         },
-  //       })
-  //     )
-  //   )?.Items ?? [];
-
-  // if (existingPhoneNumbers.length) {
-  //   const existingPhoneNumbersList = existingPhoneNumbers.map(
-  //     (student) => student.phoneNumber
-  //   );
-
-  //   throw new Error(
-  //     `بعض أرقام الهاتف موجودة في قاعدة البيانات - ${existingPhoneNumbersList.join(
-  //       "، "
-  //     )}`
-  //   );
-  // }
 }
 
 async function createSupervisors(newSupervisors) {
@@ -521,7 +470,7 @@ async function createSupervisors(newSupervisors) {
   return notInsertedSupervisors;
 }
 
-async function insertStudentsHelper(students) {
+async function upsertStudentsHelper(students) {
   const maxBatchSize = 25;
   const studentsChunks = [];
   const notInsertedStudents = [];
@@ -548,7 +497,7 @@ async function insertStudentsHelper(students) {
   return notInsertedStudents;
 }
 
-export async function createStudents(students) {
+async function getRequiredDataUpsertedStudents(students) {
   const levelsNames = [
     ...new Set(
       students.map((student) => translateNumberToArabic(student.level))
@@ -647,6 +596,17 @@ export async function createStudents(students) {
 
   const existingStudents = await getExistingStudents(students);
 
+  return {
+    levelsMap,
+    supervisorsMap,
+    existingStudents,
+  };
+}
+
+export async function createStudents(students) {
+  const { existingStudents, levelsMap, supervisorsMap } =
+    await getRequiredDataUpsertedStudents(students);
+
   const newStudents = students
     .filter(
       (student) =>
@@ -681,10 +641,10 @@ export async function createStudents(students) {
     }));
 
   let studentsToInsert = newStudents;
-  retry = 0;
+  let retry = 0;
 
   while (studentsToInsert.length > 0) {
-    studentsToInsert = await insertStudentsHelper(studentsToInsert);
+    studentsToInsert = await upsertStudentsHelper(studentsToInsert);
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -696,9 +656,67 @@ export async function createStudents(students) {
   }
 
   return {
-    newStudentsCount: newStudents.length - studentsToInsert.length,
+    createdStudentsCount: newStudents.length - studentsToInsert.length,
     existingStudentsCount: existingStudents.length,
     failedToInsert: studentsToInsert,
     existingStudents: existingStudents,
+  };
+}
+
+// This is not exactly update but specific to update to make them rejoin as fresh
+export async function updateStudents(students) {
+  const { existingStudents, levelsMap, supervisorsMap } =
+    await getRequiredDataUpsertedStudents(students);
+  const newStudents = existingStudents.map((existingStudent) => {
+    const newStudent = students.find((student) => {
+      return (
+        existingStudent.studentName === student.studentName ||
+        existingStudent.phoneNumber === student.phoneNumber
+      );
+    });
+    return {
+      ...existingStudent,
+      studentName: newStudent.studentName,
+      levelID: levelsMap[translateNumberToArabic(newStudent.level)],
+      supervisorID: supervisorsMap[newStudent.supervisorName],
+      grouNumber: Number(newStudent.groupNumber),
+      joinTime: {
+        year: Number(newStudent.joinYear),
+        semester: Number(newStudent.joinSemester),
+        semesterMonth: Number(newStudent.joinMonth),
+      },
+      gender: newStudent.gender === "ذكر" ? "male" : "female",
+      phoneNumber: `${newStudent.phoneNumber}`,
+      status: "منتظم/ة",
+      memorizingProgress: 0,
+      revisitProgress: [],
+      // TODO: keep history of frozen and history of withrown later
+      frozenSemesters: existingStudent.frozenSemesters,
+      test1: 0,
+      test2: 0,
+      test3: 0,
+      test4: 0,
+      test5: 0,
+    };
+  });
+
+  let studentsToUpdate = newStudents;
+  let retry = 0;
+
+  while (studentsToUpdate.length > 0) {
+    studentsToUpdate = await upsertStudentsHelper(studentsToUpdate);
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    if (retry > 3) {
+      throw new Error("Failed to insert students");
+    }
+
+    retry++;
   }
+
+  return {
+    updatedStudentsCount: newStudents.length - studentsToUpdate.length,
+    failedToUpdate: studentsToUpdate,
+  };
 }
