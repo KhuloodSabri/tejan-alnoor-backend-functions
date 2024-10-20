@@ -1,5 +1,8 @@
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import readline from "readline";
 import { DescribeTableCommand } from "@aws-sdk/client-dynamodb";
+import csv from "csv-parser";
+import fs from "fs";
 
 export async function promptUser(query) {
   const rl = readline.createInterface({
@@ -66,4 +69,72 @@ export async function waitForTableToBecomeDeleted(client, tableName) {
   }
 
   await promptUser("Press enter to continue...");
+}
+
+export function trimStringQuotes(str) {
+  let res = str.trim();
+
+  if (res.startsWith('"') && res.endsWith('"')) {
+    res = res.slice(1, -1);
+  }
+
+  return res.trim();
+}
+
+export async function updateStudentsFromCsv(
+  csvPath,
+  awsDocDynamoDbClient,
+  updateStudentFn
+) {
+  const students =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Students",
+        })
+      )
+    )?.Items ?? [];
+
+  const processingFilePromise = new Promise((resolve, reject) => {
+    fs.createReadStream(csvPath)
+      .pipe(csv())
+      .on("data", async (row) => {
+        if (!!row["اسم الطالب/ة"]?.length) {
+          const filteredStudents = students.filter((student) => {
+            return (
+              trimStringQuotes(student.studentName) ===
+              trimStringQuotes(row["اسم الطالب/ة"])
+            );
+          });
+
+          if (filteredStudents.length === 1) {
+            await updateStudentFn(filteredStudents[0], row);
+          } else if (filteredStudents.length === 0) {
+            console.error(
+              "Did not find: ",
+              row["اسم الطالب/ة"],
+
+              row["اسم المشرف/ة"]
+            );
+          } else {
+            console.error(
+              "Found multiple students: ",
+              row["اسم الطالب/ة"],
+              row["اسم المشرف/ة"],
+              filteredStudents.map((student) => student.studentID)
+            );
+          }
+        }
+      })
+      .on("end", () => {
+        console.log("Updated all students details");
+        resolve();
+      })
+      .on("error", (error) => {
+        console.error("Error processing file", error);
+        reject(error);
+      });
+  });
+
+  await processingFilePromise;
 }
