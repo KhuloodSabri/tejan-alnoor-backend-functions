@@ -4,9 +4,11 @@ import {
   GetCommand,
   DynamoDBDocumentClient,
   BatchWriteCommand,
+  PutCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
 import { translateNumberToArabic } from "./number.mjs";
+import { normalizeString } from "./utils.mjs";
 
 const awsDynamoDbClient =
   process.env.DEV === "true"
@@ -24,20 +26,20 @@ function getSemesterMonthsCount(semester) {
   return semester.semester === 1 || semester.semester === 2 ? 3 : 1;
 }
 
-function getStudentStartWeek(currentSemesterDetails, student) {
-  const joinYear = student.joinTime.year;
-  const joinSemester = student.joinTime.semester;
-  const joinMonth = student.joinTime.semesterMonth;
-  let monthsSinceJoin = (currentSemesterDetails.year - joinYear) * 7;
+function getStudentStartWeek(semesterDetails, student) {
+  const joinYear = student.joinYear;
+  const joinSemester = student.joinSemester;
+  const joinMonth = student.joinMonth;
+  let monthsSinceJoin = (semesterDetails.year - joinYear) * 7;
 
-  monthsSinceJoin += (currentSemesterDetails.semester - 1) * 3; // 1 and 2 are 3 months
+  monthsSinceJoin += (semesterDetails.semester - 1) * 3; // 1 and 2 are 3 months
   monthsSinceJoin -= (joinSemester - 1) * 3; // 1 and 2 are 3 months
   monthsSinceJoin -= joinMonth - 1;
 
   monthsSinceJoin -= student.frozenSemesters.reduce((acc, semester) => {
     if (
-      semester.year >= currentSemesterDetails.year &&
-      semester.semester >= currentSemesterDetails.semester
+      semester.year >= semesterDetails.year &&
+      semester.semester >= semesterDetails.semester
     ) {
       return acc;
     }
@@ -45,10 +47,332 @@ function getStudentStartWeek(currentSemesterDetails, student) {
     return acc + getSemesterMonthsCount(semester);
   }, 0);
 
-  return monthsSinceJoin * 4 + 1;
+  return Math.max(monthsSinceJoin * 4, 0);
 }
 
-export async function getStudentsSheetRows() {
+export async function getSemester(semesterYear, semesterNumber) {
+  return (
+    (
+      await awsDocDynamoDbClient.send(
+        new GetCommand({
+          TableName: "Semesters",
+          Key: {
+            semesterID: `${semesterYear}-${semesterNumber}`,
+          },
+        })
+      )
+    )?.Item ?? null
+  );
+}
+
+export async function addSemesterDetails(
+  semesterYear,
+  semesterNumber,
+  spreadsheetId
+) {
+  const item = {
+    semesterID: `${semesterYear}-${semesterNumber}`,
+    year: semesterYear,
+    semester: semesterNumber,
+    spreadsheetId,
+    createdAt: Date.now(),
+  };
+
+  await awsDocDynamoDbClient.send(
+    new PutCommand({
+      TableName: "Semesters",
+      Item: item,
+    })
+  );
+
+  return item;
+}
+
+function getMemorizingMeetingsPlan(level) {
+  const weeksPerMonth = 4;
+  const meetingsPerWeek = 2;
+  const meetingsPerMonth = meetingsPerWeek * weeksPerMonth;
+  const meetingsCount = meetingsPerMonth * level.monthsPlanByPage.length;
+
+  const memorizingPlan = [2, ...level.monthsPlanByPage];
+
+  const avgExpectedMemorizedPerMonth =
+    level.avgMemorizedPagesPerMeeting * meetingsPerMonth;
+
+  const meetingsExpectedMemorizedPages = [];
+
+  for (let i = 0; i < meetingsCount; i++) {
+    let value;
+    const prevMonthIndex = Math.floor(i / (meetingsPerWeek * 4));
+
+    const monthTargetPage = memorizingPlan[prevMonthIndex + 1];
+    const prevMonthTargetPage = memorizingPlan[prevMonthIndex];
+
+    const avgMinusActual =
+      avgExpectedMemorizedPerMonth - (monthTargetPage - prevMonthTargetPage);
+
+    if ((i + 1) % (meetingsPerWeek * 4) === 0) {
+      value = monthTargetPage;
+    } else {
+      value =
+        prevMonthTargetPage +
+        level.avgMemorizedPagesPerMeeting * ((i % meetingsPerMonth) + 1);
+
+      if (avgMinusActual > 0) {
+        const prevMeetingValue =
+          meetingsExpectedMemorizedPages.length > 0
+            ? meetingsExpectedMemorizedPages[
+                meetingsExpectedMemorizedPages.length - 1
+              ]
+            : prevMonthTargetPage;
+
+        value = Math.max(prevMeetingValue + 1, value - avgMinusActual);
+      }
+    }
+
+    meetingsExpectedMemorizedPages.push(value);
+  }
+
+  return meetingsExpectedMemorizedPages;
+}
+
+function countSemesters(year, semester, studentYear, studentSemester) {
+  if (studentYear > year) {
+    return 0;
+  }
+
+  if (studentYear === year) {
+    return studentSemester <= semester ? semester - studentSemester + 1 : 0;
+  }
+
+  return (year - studentYear) * 3 + semester - studentSemester + 1;
+}
+
+export async function getStudentsDetailedSheetRows(year, semester) {
+  const semesterStudents =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Students",
+          FilterExpression: "#joinYear <= :year AND #joinSemester <= :semester",
+          ExpressionAttributeNames: {
+            "#joinYear": "joinYear",
+            "#joinSemester": "joinSemester",
+          },
+          ExpressionAttributeValues: {
+            ":year": year,
+            ":semester": semester,
+          },
+        })
+      )
+    )?.Items ?? [];
+
+  console.log("semester students count", semesterStudents.length);
+
+  console.log("getting levels");
+  const levels =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Levels",
+        })
+      )
+    )?.Items ?? [];
+
+  console.log("got students and levels, mapping levels");
+  const levelsMap = levels.reduce((acc, level) => {
+    acc[level.levelID] = {
+      ...level,
+      memorizingDetailedPlan: getMemorizingMeetingsPlan(level),
+    };
+    return acc;
+  }, {});
+
+  console.log("getting supervisors");
+  const supervisors =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Supervisors",
+        })
+      )
+    )?.Items ?? [];
+
+  console.log("mapping supervisors");
+  const supervisorsMap = supervisors.reduce((acc, supervisor) => {
+    acc[supervisor.supervisorID] = supervisor;
+    return acc;
+  }, {});
+
+  console.log("mapping semester students to rows");
+  const studentsRows = semesterStudents
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((student) => {
+      const studentLevel = levelsMap[student.levelID];
+      const studentStartWeek = getStudentStartWeek({ year, semester }, student);
+
+      const semesterMonthsCount = semester === 3 ? 1 : 3;
+      const semesterWeeksCount = semesterMonthsCount * 4;
+
+      const studentMissedMonths =
+        student.joinYear === year && student.joinSemester === semester
+          ? student.joinMonth - 1
+          : 0;
+      const studentMissedWeeks = studentMissedMonths * 4;
+
+      const revisitMeetingsPerWeek = 1;
+      const memorizingMeetingsPerWeek = 2;
+      const memorizingMeetingsCount =
+        semesterWeeksCount * memorizingMeetingsPerWeek;
+      const revisitingMeetingsCount =
+        semesterWeeksCount * revisitMeetingsPerWeek;
+      const meetingsCount = memorizingMeetingsCount + revisitingMeetingsCount;
+
+      const studentMissedMemorizingMeetingsCount = studentMissedWeeks * 2;
+      const studentMissedRevisitingMeetingsCount = studentMissedWeeks;
+      const studentMissedMeetingsCount =
+        studentMissedMemorizingMeetingsCount +
+        studentMissedRevisitingMeetingsCount;
+
+      const revisitPlan = studentLevel.weeksPlan.slice(
+        studentStartWeek,
+        studentStartWeek + semesterWeeksCount - studentMissedWeeks
+      );
+
+      const memorizingPlan = studentLevel.memorizingDetailedPlan.slice(
+        studentStartWeek * memorizingMeetingsPerWeek
+      );
+
+      const revisitSummary = revisitPlan.map((week) => {
+        if (
+          student.revisitProgress.find(
+            (range) => range[0] <= week[0] && range[1] >= week[1]
+          )
+        ) {
+          return 1; //"✅";
+        }
+
+        return 0; // "❌";
+      });
+
+      const preDefaultRevisitFill = Array(
+        studentMissedRevisitingMeetingsCount
+      ).fill(0);
+
+      const postDefaultRevisitFill = Array(
+        Math.max(
+          semesterWeeksCount -
+            revisitSummary.length -
+            preDefaultRevisitFill.length,
+          0
+        )
+      ).fill(0);
+
+      const fullRevisitSummary = [
+        ...preDefaultRevisitFill,
+        ...revisitSummary,
+        ...postDefaultRevisitFill,
+      ];
+
+      const presenceAndAbsenceDetails = [];
+      let presenceTotal = 0;
+      let absenceTotal = 0;
+      const checksStatuses = [];
+
+      for (let i = 0; i < meetingsCount; i++) {
+        let newValue = 0;
+        if (i < studentMissedMeetingsCount) {
+          newValue = 0;
+        } else if (Math.floor(i + 1) % 3 === 0) {
+          newValue = fullRevisitSummary[Math.floor(i / 3)];
+        } else {
+          const expectedMemorized =
+            memorizingPlan[
+              i - Math.floor(i / 3) - studentMissedMemorizingMeetingsCount
+            ];
+          newValue = student.memorizingProgress >= expectedMemorized ? 1 : 0;
+        }
+
+        if (newValue === 1) {
+          presenceTotal++;
+        } else {
+          absenceTotal++;
+        }
+        presenceAndAbsenceDetails.push(newValue);
+
+        if ((i + 1) % 6 === 0) {
+          if (
+            student.withdrawnSemesters.some(
+              (studentSemester) =>
+                studentSemester.year === year &&
+                studentSemester.semester === semester
+            )
+          ) {
+            checksStatuses.push("الطالبـ/ـة منسحب/ة");
+          } else if (
+            student.frozenSemesters.some(
+              (studentSemester) =>
+                studentSemester.year === year &&
+                studentSemester.semester === semester
+            )
+          ) {
+            checksStatuses.push("تم تجميد الفصل");
+          } else if (i < studentMissedMeetingsCount) {
+            checksStatuses.push("لم ينضم بعد");
+          } else if (absenceTotal - studentMissedMeetingsCount >= 5) {
+            checksStatuses.push("فصل");
+          } else if (absenceTotal - studentMissedMeetingsCount >= 3) {
+            checksStatuses.push("تحذير");
+          } else {
+            checksStatuses.push("طبيعي");
+          }
+        }
+      }
+
+      return [
+        student.studentID,
+        `=HYPERLINK( "https://khuloodsabri.github.io/tejan-alnoor/students/${student.studentID}","صفحة الطالب/ة")`,
+        supervisorsMap[student.supervisorID]?.supervisorName,
+        student.studentName,
+        Number(student.memorizingProgress),
+        student.gender === "male" ? "ذكر" : "أنثى",
+        `'${student.phoneNumber}`,
+        student.joinYear,
+        year,
+        semester,
+        student.joinSemester,
+        student.joinMonth,
+        student.groupNumber,
+        countSemesters(year, semester, student.joinYear, student.joinSemester),
+        studentLevel.levelName,
+        Math.floor(studentStartWeek / 4) + 1,
+        student.status,
+        presenceTotal,
+        absenceTotal,
+        ...(checksStatuses.length < 6
+          ? [
+              ...checksStatuses,
+              ...Array(6 - checksStatuses.length).fill("الفصل الصيفي شهر واحد"),
+            ]
+          : checksStatuses),
+        ...(presenceAndAbsenceDetails.length < 36
+          ? [
+              ...presenceAndAbsenceDetails,
+              ...Array(36 - presenceAndAbsenceDetails.length).fill(0),
+            ]
+          : presenceAndAbsenceDetails),
+        Number(student.tests[year]?.[semester]?.[1]),
+        Number(student.tests[year]?.[semester]?.[2]),
+        Number(student.tests[year]?.[semester]?.[3]),
+        Number(student.tests[year]?.[semester]?.[4]),
+        Number(student.tests[year]?.[semester]?.[5]),
+      ];
+    });
+
+  return studentsRows;
+}
+
+export async function getStudentsBriefSheetRows() {
   console.log("getting current semester details");
   const currentSemesterDetails =
     (
@@ -62,16 +386,25 @@ export async function getStudentsSheetRows() {
       )
     )?.Item?.value ?? null;
 
-  console.log("getting students");
+  const { year, semester } = currentSemesterDetails;
 
-  const students =
+  const activeStudents =
     (
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Students",
+          FilterExpression: "#status = :status",
+          ExpressionAttributeNames: {
+            "#status": "status",
+          },
+          ExpressionAttributeValues: {
+            ":status": "منتظم/ة",
+          },
         })
       )
     )?.Items ?? [];
+
+  console.log("active students count", activeStudents.length);
 
   console.log("getting levels");
   const levels =
@@ -79,58 +412,51 @@ export async function getStudentsSheetRows() {
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Levels",
-          ProjectionExpression: `levelID, levelName, weeksPlan`,
         })
       )
     )?.Items ?? [];
 
   console.log("got students and levels, mapping levels");
   const levelsMap = levels.reduce((acc, level) => {
-    acc[level.levelID] = level;
+    acc[level.levelID] = {
+      ...level,
+    };
     return acc;
   }, {});
 
-  console.log("mapping students to rows");
-  const studentsRows = students
-    .sort((a, b) => a.studentID - b.studentID)
+  console.log("getting supervisors");
+  const supervisors =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Supervisors",
+        })
+      )
+    )?.Items ?? [];
+
+  console.log("mapping supervisors");
+  const supervisorsMap = supervisors.reduce((acc, supervisor) => {
+    acc[supervisor.supervisorID] = supervisor;
+    return acc;
+  }, {});
+
+  console.log("mapping active students to rows");
+  const studentsRows = activeStudents
+    .sort((a, b) => a.createdAt - b.createdAt)
     .map((student) => {
       const studentLevel = levelsMap[student.levelID];
-      const studentStartWeek = getStudentStartWeek(
-        currentSemesterDetails,
-        student
-      );
-
-      const revisitSummary = studentLevel.weeksPlan
-        .slice(studentStartWeek - 1, studentStartWeek - 1 + 12)
-        .map((week) => {
-          if (
-            student.revisitProgress.find(
-              (range) => range[0] <= week[0] && range[1] >= week[1]
-            )
-          ) {
-            return 1; //"✅";
-          }
-
-          return 0; // "❌";
-        });
-
-      const defaultRevisitFill = Array(
-        Math.max(12 - revisitSummary.length, 0)
-      ).fill("");
+      const studentStartWeek = getStudentStartWeek({ year, semester }, student);
 
       return [
         student.studentID,
+        `=HYPERLINK( "https://khuloodsabri.github.io/tejan-alnoor/students/${student.studentID}","صفحة الطالب/ة")`,
+        supervisorsMap[student.supervisorID]?.supervisorName,
         student.studentName,
+        Number(student.memorizingProgress),
+        student.gender === "male" ? "ذكر" : "أنثى",
         studentLevel.levelName,
         Math.floor(studentStartWeek / 4) + 1,
-        Number(student.memorizingProgress),
-        ...revisitSummary,
-        ...defaultRevisitFill,
-        Number(student.test1),
-        Number(student.test2),
-        Number(student.test3),
-        Number(student.test4),
-        Number(student.test5),
+        student.status,
       ];
     });
 
@@ -622,22 +948,20 @@ export async function createStudents(students) {
       levelID: levelsMap[translateNumberToArabic(student.level)],
       supervisorID: supervisorsMap[student.supervisorName],
       grouNumber: Number(student.groupNumber),
-      joinTime: {
-        year: Number(student.joinYear),
-        semester: Number(student.joinSemester),
-        semesterMonth: Number(student.joinMonth),
-      },
+      joinYear: Number(student.joinYear),
+      joinSemester: Number(student.joinSemester),
+      joinMonth: Number(student.joinMonth),
       gender: student.gender === "ذكر" ? "male" : "female",
       phoneNumber: `${student.phoneNumber}`,
       status: "منتظم/ة",
       memorizingProgress: 0,
       revisitProgress: [],
       frozenSemesters: [],
-      test1: 0,
-      test2: 0,
-      test3: 0,
-      test4: 0,
-      test5: 0,
+      dismissedSemesters: [],
+      normalizedName: normalizeString(student.studentName),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      tests: {},
     }));
 
   let studentsToInsert = newStudents;
@@ -680,23 +1004,21 @@ export async function updateStudents(students) {
       levelID: levelsMap[translateNumberToArabic(newStudent.level)],
       supervisorID: supervisorsMap[newStudent.supervisorName],
       grouNumber: Number(newStudent.groupNumber),
-      joinTime: {
-        year: Number(newStudent.joinYear),
-        semester: Number(newStudent.joinSemester),
-        semesterMonth: Number(newStudent.joinMonth),
-      },
+      joinYear: Number(newStudent.joinYear),
+      joinSemester: Number(newStudent.joinSemester),
+      joinMonth: Number(newStudent.joinMonth),
       gender: newStudent.gender === "ذكر" ? "male" : "female",
       phoneNumber: `${newStudent.phoneNumber}`,
       status: "منتظم/ة",
       memorizingProgress: 0,
       revisitProgress: [],
-      // TODO: keep history of frozen and history of withrown later
       frozenSemesters: existingStudent.frozenSemesters,
-      test1: 0,
-      test2: 0,
-      test3: 0,
-      test4: 0,
-      test5: 0,
+      withdrawnSemesters: existingStudent.withdrawnSemesters,
+      dismissedSemesters: existingStudent.dismissedSemesters,
+      normalizedName: normalizeString(newStudent.studentName),
+      createdAt: existingStudent.createdAt,
+      updatedAt: Date.now(),
+      tests: {},
     };
   });
 

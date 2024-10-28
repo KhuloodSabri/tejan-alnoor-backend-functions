@@ -6,6 +6,7 @@ import {
   UpdateCommand,
   BatchGetCommand,
 } from "@aws-sdk/lib-dynamodb";
+import * as Yup from "yup";
 
 const awsDynamoDbClient =
   process.env.DEV === "true"
@@ -67,7 +68,7 @@ export async function getActiveStudents() {
 
   for (let i = 0; i < supervisorIds.length; i += 100) {
     const supervisorIdsBatch = supervisorIds.slice(i, i + 100);
-    console.log("supervisorIdsBatch", supervisorIdsBatch);
+
     const supervisorsBatch =
       (
         await awsDocDynamoDbClient.send(
@@ -161,82 +162,98 @@ export function validateUpdateStudentRequest(studentID, body) {
     throw new Error("Bad Request");
   }
 
-  const {
-    studentID: _studentID,
-    memorizingProgress,
-    revisitProgress,
-    test1,
-    test2,
-    test3,
-    test4,
-    test5,
-    ...rest
-  } = body;
+  const gradeSchema = Yup.number()
+    .transform((value, originalValue) =>
+      originalValue ? Number(originalValue) : originalValue
+    )
+    .min(0)
+    .max(100)
+    .optional();
 
-  if (Object.keys(rest).length > 0) {
-    console.log("Body has forbidden keys " + JSON.stringify(rest));
-    throw new Error("Bad Request");
-  }
+  // Define the innermost schema for { [1 or 2 or 3 or 4 or 5]: number }
+  const semesterTestsSchema = Yup.object()
+    .shape({
+      1: gradeSchema,
+      2: gradeSchema,
+      3: gradeSchema,
+      4: gradeSchema,
+      5: gradeSchema,
+    })
+    .noUnknown()
+    .optional(); // Prevent unknown keys
 
-  if (
-    Object.values({
-      memorizingProgress,
-      revisitProgress,
-      test1,
-      test2,
-      test3,
-      test4,
-      test5,
-    }).filter((value) => value !== undefined).length === 0
-  ) {
-    console.log("Body has no updates " + JSON.stringify(body));
-    throw new Error("Bad Request");
-  }
+  // Define the schema for { [1 or 2 or 3]: { [1 or 2 or 3 or 4 or 5]: number } }
+  const yearTestsSchema = Yup.object()
+    .shape({
+      1: semesterTestsSchema,
+      2: semesterTestsSchema,
+      3: semesterTestsSchema,
+    })
+    .noUnknown(); // Prevent unknown keys
 
-  const notValidNumberAttr = findNaN(body, [
-    "memorizingProgress",
-    "test1",
-    "test2",
-    "test3",
-    "test4",
-    "test5",
-  ]);
-
-  if (notValidNumberAttr) {
-    console.log(
-      `${notValidNumberAttr} is not a number ` + JSON.stringify(body)
+  const rangePairSchema = Yup.array()
+    .of(Yup.number().integer().min(1).required()) // Ensure both values are integers and required
+    .length(2) // Ensure there are exactly 2 items in each pair
+    .test(
+      "range-order",
+      "rangeFromInteger must be <= rangeToInteger",
+      (arr) => {
+        return arr[0] <= arr[1]; // Ensure rangeFrom <= rangeTo
+      }
     );
+
+  const schema = Yup.object({
+    tests: Yup.lazy((value) =>
+      Yup.object(
+        Object.keys(value || {}).reduce((acc, key) => {
+          if (/^\d{4}$/.test(key) && parseInt(key) >= 2000) {
+            acc[key] = yearTestsSchema;
+          }
+          return acc;
+        }, {})
+      )
+    ).optional(),
+    revisitProgress: Yup.array().of(rangePairSchema).optional(),
+    memorizingProgress: Yup.number().integer().min(0).optional(),
+  });
+
+  try {
+    schema.validateSync(body);
+  } catch (err) {
+    console.error("Validation error: ", err.errors);
     throw new Error("Bad Request");
   }
 
-  if (
-    revisitProgress !== undefined &&
-    (!Array.isArray(revisitProgress) ||
-      revisitProgress.some(
-        (range) =>
-          !Array.isArray(range) ||
-          range?.length !== 2 ||
-          range.some((item) => isNaN(Number(item))) ||
-          Number(range[0]) > Number(range[1])
-      ))
-  ) {
-    console.log(
-      "revisitProgress is not an array of ranges " + JSON.stringify(body)
-    );
-    throw new Error("Bad Request");
+  if (body?.tests) {
+    const tests = body.tests;
+    Object.keys(tests).some((year) => {
+      const numYear = Number(year);
+
+      if (isNaN(numYear)) {
+        console.log(`year ${year} is not a number`);
+        throw new Error("Bad Request");
+      }
+
+      if (parseInt(year) !== numYear) {
+        console.log(`year ${year} is not an integer`);
+        throw new Error("Bad Request");
+      }
+
+      if (numYear < 2000) {
+        console.log(`year ${year} is less than 2000`);
+        throw new Error("Bad Request");
+      }
+
+      if (numYear > 3000) {
+        console.log(`year ${year} is greater than 3000`);
+        throw new Error("Bad Request");
+      }
+    });
   }
 }
 
 export async function updateStudent(studentID, body) {
-  const {
-    memorizingProgress,
-    revisitProgress,
-    test1,
-    test2,
-    test3,
-    test4,
-    test5,
-  } = body;
+  const { memorizingProgress, revisitProgress, tests } = body;
 
   const updateExpressions = [];
   const expressionAttributeNames = {};
@@ -279,35 +296,47 @@ export async function updateStudent(studentID, body) {
     expressionAttributeValues[":revisitProgress"] = mergedProgress;
   }
 
-  if (test1 !== undefined) {
-    updateExpressions.push("#test1 = :test1 ");
-    expressionAttributeNames["#test1"] = "test1";
-    expressionAttributeValues[":test1"] = Number(test1);
+  if (tests !== undefined) {
+    let mergedTests =
+      (
+        await awsDocDynamoDbClient.send(
+          new GetCommand({
+            TableName: "Students",
+            Key: {
+              studentID: studentID,
+            },
+            ProjectionExpression: "tests",
+          })
+        )
+      )?.Item?.tests ?? {};
+
+    for (const year of Object.keys(tests ?? {})) {
+      for (const semester of Object.keys(tests[year] ?? {})) {
+        for (const test of Object.keys(tests[year][semester] ?? {})) {
+          const testValue = tests[year][semester][test];
+
+          mergedTests = {
+            ...mergedTests,
+            [year]: {
+              ...mergedTests[year],
+              [semester]: {
+                ...mergedTests[year]?.[semester],
+                [test]: testValue,
+              },
+            },
+          };
+        }
+      }
+    }
+
+    updateExpressions.push(`#tests = :tests`);
+    expressionAttributeNames[`#tests`] = `tests`;
+    expressionAttributeValues[`:tests`] = mergedTests;
   }
 
-  if (test2 !== undefined) {
-    updateExpressions.push("#test2 = :test2 ");
-    expressionAttributeNames["#test2"] = "test2";
-    expressionAttributeValues[":test2"] = Number(test2);
-  }
-
-  if (test3 !== undefined) {
-    updateExpressions.push("#test3 = :test3 ");
-    expressionAttributeNames["#test3"] = "test3";
-    expressionAttributeValues[":test3"] = Number(test3);
-  }
-
-  if (test4 !== undefined) {
-    updateExpressions.push("#test4 = :test4 ");
-    expressionAttributeNames["#test4"] = "test4";
-    expressionAttributeValues[":test4"] = Number(test4);
-  }
-
-  if (test5 !== undefined) {
-    updateExpressions.push("#test5 = :test5 ");
-    expressionAttributeNames["#test5"] = "test5";
-    expressionAttributeValues[":test5"] = Number(test5);
-  }
+  updateExpressions.push("#updatedAt = :updatedAt");
+  expressionAttributeNames["#updatedAt"] = "updatedAt";
+  expressionAttributeValues[":updatedAt"] = Date.now();
 
   const params = {
     TableName: "Students",

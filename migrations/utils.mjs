@@ -110,17 +110,11 @@ export async function updateStudentsFromCsv(
           if (filteredStudents.length === 1) {
             await updateStudentFn(filteredStudents[0], row);
           } else if (filteredStudents.length === 0) {
-            console.error(
-              "Did not find: ",
-              row["اسم الطالب/ة"],
-
-              row["اسم المشرف/ة"]
-            );
+            console.error("Did not find: ", row["اسم الطالب/ة"]);
           } else {
             console.error(
               "Found multiple students: ",
               row["اسم الطالب/ة"],
-              row["اسم المشرف/ة"],
               filteredStudents.map((student) => student.studentID)
             );
           }

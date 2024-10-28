@@ -92,7 +92,7 @@ async function run(env, targetVersion) {
         if (versions.length - currentVersionIndex - 1 < number) {
           console.error(
             `There are only ${
-              versions.length - currentVersionIndex
+              versions.length - currentVersionIndex - 1
             } migrations available after the current version.`
           );
           return;

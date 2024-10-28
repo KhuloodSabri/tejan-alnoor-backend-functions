@@ -1,8 +1,4 @@
 import {
-  CreateTableCommand,
-  DeleteTableCommand,
-} from "@aws-sdk/client-dynamodb";
-import {
   DynamoDBDocumentClient,
   ScanCommand,
   UpdateCommand,
