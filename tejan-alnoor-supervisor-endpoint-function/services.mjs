@@ -192,7 +192,7 @@ export function validateUpdateStudentRequest(studentID, body) {
     .noUnknown(); // Prevent unknown keys
 
   const rangePairSchema = Yup.array()
-    .of(Yup.number().integer().min(1).required()) // Ensure both values are integers and required
+    .of(Yup.number().min(1).required()) // Ensure both values are integers and required
     .length(2) // Ensure there are exactly 2 items in each pair
     .test(
       "range-order",
@@ -214,7 +214,7 @@ export function validateUpdateStudentRequest(studentID, body) {
       )
     ).optional(),
     revisitProgress: Yup.array().of(rangePairSchema).optional(),
-    memorizingProgress: Yup.number().integer().min(0).optional(),
+    memorizingProgress: Yup.number().min(0).optional(),
   });
 
   try {

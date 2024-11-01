@@ -154,7 +154,8 @@ export async function getStudentsDetailedSheetRows(year, semester) {
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Students",
-          FilterExpression: "#joinYear <= :year AND #joinSemester <= :semester",
+          FilterExpression:
+            "(#joinYear <= :year AND #joinSemester <= :semester) OR #joinYear < :year",
           ExpressionAttributeNames: {
             "#joinYear": "joinYear",
             "#joinSemester": "joinSemester",
@@ -302,7 +303,7 @@ export async function getStudentsDetailedSheetRows(year, semester) {
 
         if ((i + 1) % 6 === 0) {
           if (
-            student.withdrawnSemesters.some(
+            student.withdrawnSemesters?.some(
               (studentSemester) =>
                 studentSemester.year === year &&
                 studentSemester.semester === semester
@@ -310,7 +311,7 @@ export async function getStudentsDetailedSheetRows(year, semester) {
           ) {
             checksStatuses.push("الطالبـ/ـة منسحب/ة");
           } else if (
-            student.frozenSemesters.some(
+            student.frozenSemesters?.some(
               (studentSemester) =>
                 studentSemester.year === year &&
                 studentSemester.semester === semester
@@ -947,7 +948,7 @@ export async function createStudents(students) {
       studentName: student.studentName,
       levelID: levelsMap[translateNumberToArabic(student.level)],
       supervisorID: supervisorsMap[student.supervisorName],
-      grouNumber: Number(student.groupNumber),
+      groupNumber: Number(student.groupNumber),
       joinYear: Number(student.joinYear),
       joinSemester: Number(student.joinSemester),
       joinMonth: Number(student.joinMonth),
@@ -1003,7 +1004,7 @@ export async function updateStudents(students) {
       studentName: newStudent.studentName,
       levelID: levelsMap[translateNumberToArabic(newStudent.level)],
       supervisorID: supervisorsMap[newStudent.supervisorName],
-      grouNumber: Number(newStudent.groupNumber),
+      groupNumber: Number(newStudent.groupNumber),
       joinYear: Number(newStudent.joinYear),
       joinSemester: Number(newStudent.joinSemester),
       joinMonth: Number(newStudent.joinMonth),

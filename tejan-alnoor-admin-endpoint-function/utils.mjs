@@ -1,14 +1,14 @@
 export const normalizeString = (name) => {
   let result = name;
-  result = result.replace("أ", "ا");
-  result = result.replace("ى", "ا");
-  result = result.replace("آ", "ا");
-  result = result.replace("إ", "ا");
-  result = result.replace("ي ", "ا ");
-  result = result.replace("ؤ", "و");
-  result = result.replace("ة", "ه");
-  result = result.replace("ئ", "ي");
-  result = result.replace(" ", "");
+  result = result.replaceAll("أ", "ا");
+  result = result.replaceAll("ى", "ا");
+  result = result.replaceAll("آ", "ا");
+  result = result.replaceAll("إ", "ا");
+  result = result.replaceAll("ي ", "ا ");
+  result = result.replaceAll("ؤ", "و");
+  result = result.replaceAll("ة", "ه");
+  result = result.replaceAll("ئ", "ي");
+  result = result.replaceAll(" ", "");
 
   return result;
 };
