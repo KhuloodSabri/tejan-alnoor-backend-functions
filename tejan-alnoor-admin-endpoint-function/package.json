@@ -4,6 +4,7 @@
     "@aws-sdk/client-secrets-manager": "^3.637.0",
     "@aws-sdk/lib-dynamodb": "^3.645.0",
     "express-oauth2-jwt-bearer": "^1.6.0",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "yup": "^1.4.0"
   }
 }
