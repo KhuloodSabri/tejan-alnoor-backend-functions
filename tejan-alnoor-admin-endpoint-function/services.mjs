@@ -9,6 +9,7 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { translateNumberToArabic } from "./number.mjs";
 import { normalizeString } from "./utils.mjs";
+import * as Yup from "yup";
 
 const awsDynamoDbClient =
   process.env.DEV === "true"
@@ -989,7 +990,7 @@ export async function createStudents(students) {
 }
 
 // This is not exactly update but specific to update to make them rejoin as fresh
-export async function updateStudents(students) {
+export async function replaceStudents(students) {
   const { existingStudents, levelsMap, supervisorsMap } =
     await getRequiredDataUpsertedStudents(students);
   const newStudents = existingStudents.map((existingStudent) => {
@@ -1043,3 +1044,253 @@ export async function updateStudents(students) {
     failedToUpdate: studentsToUpdate,
   };
 }
+
+export async function getStudentById(studentId, includeSubresources = {}) {
+  console.log("getting student", studentId, "----", includeSubresources);
+  const student =
+    (
+      await awsDocDynamoDbClient.send(
+        new GetCommand({
+          TableName: "Students",
+          Key: {
+            studentID: studentId,
+          },
+        })
+      )
+    )?.Item ?? null;
+
+  if (!includeSubresources.supervisorName) {
+    return student;
+  }
+
+  const supervisor =
+    (
+      await awsDocDynamoDbClient.send(
+        new GetCommand({
+          TableName: "Supervisors",
+          Key: {
+            supervisorID: student.supervisorID,
+          },
+          ProjectionExpression: "supervisorID, supervisorName",
+        })
+      )
+    )?.Item ?? null;
+
+  return {
+    ...student,
+    supervisorName: supervisor?.supervisorName,
+  };
+}
+
+export async function searchStudentsByName(studentName) {
+  const students =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Students",
+          FilterExpression: "contains(#normalizedName, :studentName)",
+          ExpressionAttributeNames: {
+            "#normalizedName": "normalizedName",
+          },
+          ExpressionAttributeValues: {
+            ":studentName": normalizeString(studentName),
+          },
+          ProjectionExpression: "studentID, studentName, supervisorID, levelID",
+        })
+      )
+    )?.Items ?? [];
+
+  const studentSupervisorIds = [
+    ...new Set(students.map((student) => student.supervisorID)),
+  ];
+
+  const supervisors =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Supervisors",
+          FilterExpression: studentSupervisorIds
+            .map((_, index) => `#supervisorID = :supervisorID${index}`)
+            .join(" OR "),
+
+          ExpressionAttributeNames: {
+            "#supervisorID": "supervisorID",
+          },
+          ExpressionAttributeValues: studentSupervisorIds.reduce(
+            (acc, supervisorId, index) => {
+              acc[`:supervisorID${index}`] = supervisorId;
+              return acc;
+            },
+            {}
+          ),
+          ProjectionExpression: "supervisorID, supervisorName",
+        })
+      )
+    )?.Items ?? [];
+
+  const supervisorsMap = supervisors.reduce((acc, supervisor) => {
+    acc[supervisor.supervisorID] = supervisor.supervisorName;
+    return acc;
+  }, {});
+
+  return students.map((student) => ({
+    ...student,
+    supervisorName: supervisorsMap[student.supervisorID],
+  }));
+}
+
+export async function searchSupervisorsByName(name) {
+  const supervisors =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Supervisors",
+          FilterExpression: "contains(#normalizedName, :supervisorName)",
+          ExpressionAttributeNames: {
+            "#normalizedName": "normalizedName",
+          },
+          ExpressionAttributeValues: {
+            ":supervisorName": normalizeString(name),
+          },
+          ProjectionExpression: "supervisorID, supervisorName",
+        })
+      )
+    )?.Items ?? [];
+
+  return supervisors;
+}
+
+export const validateUpdateStudentBody = (body) => {
+  const validationSchema = Yup.object().shape({
+    studentName: Yup.string()
+      .required("يجب إدخال اسم الطالبـ/ـة")
+      .max(100, "اسم الطالبـ/ـة لا يمكن أن يتجاوز 100 حرف"),
+
+    gender: Yup.string()
+      .oneOf(["male", "female"], 'الجنس يجب أن يكون "ذكر" أو "أنثى"')
+      .required("يجب اختيار الجنس"),
+
+    groupNumber: Yup.number()
+      .required("يجب إدخال رقم الدفعة")
+      .integer("رقم الدفعة يجب أن يكون عدد صحيح"),
+
+    supervisor: Yup.object()
+      .shape({
+        supervisorID: Yup.string().nullable(),
+        supervisorName: Yup.string().required("Supervisor name is required"),
+      })
+      .required("يجب اختيار مشرفـ/ـة"),
+    phoneNumber: Yup.string()
+      .matches(
+        /^\d{10}(\d{2})?(\d{2})?$/,
+        "رقم الهاتف يجب أن يتكون من 10 أرقام أو 12 أو 14 رقمًًا مع الكود الدولي "
+      )
+      .required("يجب إدخال رقم الهاتف"),
+
+    levelID: Yup.string()
+      .required("يجب اختيار المستوى")
+      .min(0, "الستوى المختار غير صحيح")
+      .max(3, "المستوى المختار غير صحيح"),
+
+    status: Yup.string()
+      .required("يجب اختيار الحالة")
+      .oneOf(
+        ["منتظم/ة", "منسحب/ة", "جمد/ت الفصل", "مفصول/ة"],
+        "الحالة المدخلة غير صحيحة"
+      ),
+
+    joinYear: Yup.number()
+      .required("يجب إدخال سنة الالتحاق")
+      .integer("سنة الالتحاق يجب أن تكون عدد صحيح")
+      .min(1900, "سنة الالتحاق يجب أن تكون بعد عام 1900"),
+
+    joinSemester: Yup.number()
+      .required("يجب اختيار فصل الالتحاق")
+      .integer("فصل الالتحاق يجب أن يكون عدد صحيح")
+      .min(1, "فصل الالتحاق المختار غير صحيح")
+      .max(3, "فصل الالتحاق المختار غير صحيح"),
+
+    joinMonth: Yup.number()
+      .required("يجب اختيار شهر الالتحاق")
+      .integer("شهر الالتحاق يجب أن يكون عدد صحيح")
+      .min(1, "شهر الالتحاق يجب أن يكون بين 1 - 3")
+      .max(3, "شهر الالتحاق يجب أن يكون بين 1 - 3"),
+
+    withdrawnSemesters: Yup.array().of(
+      Yup.object().shape({
+        year: Yup.number()
+          .required("يجب إدخال سنة الانسحاب")
+          .integer("سنة الانسحاب يجب أن تكون عدد صحيح")
+          .min(1900, "سنة الانسحاب يجب أن تكون بعد عام 1900"),
+        semester: Yup.number()
+          .required("يجب اختيار فصل الانسحاب")
+          .integer("فصل الانسحاب يجب أن يكون عدد صحيح")
+          .min(1, "فصل الانسحاب المختار غير صحيح")
+          .max(3, "فصل الانسحاب المختار غير صحيح"),
+      })
+    ),
+
+    frozenSemesters: Yup.array().of(
+      Yup.object().shape({
+        year: Yup.number()
+          .required("يجب إدخال سنة الانسحاب")
+          .integer("سنة الانسحاب يجب أن تكون عدد صحيح")
+          .min(1900, "سنة الانسحاب يجب أن تكون بعد عام 1900"),
+        semester: Yup.number()
+          .required("يجب اختيار فصل الانسحاب")
+          .integer("فصل الانسحاب يجب أن يكون عدد صحيح")
+          .min(1, "فصل الانسحاب المختار غير صحيح")
+          .max(3, "فصل الانسحاب المختار غير صحيح"),
+      })
+    ),
+
+    dismissedSemesters: Yup.array().of(
+      Yup.object().shape({
+        year: Yup.number()
+          .required("يجب إدخال سنة الانسحاب")
+          .integer("سنة الانسحاب يجب أن تكون عدد صحيح")
+          .min(1900, "سنة الانسحاب يجب أن تكون بعد عام 1900"),
+        semester: Yup.number()
+          .required("يجب اختيار فصل الانسحاب")
+          .integer("فصل الانسحاب يجب أن يكون عدد صحيح")
+          .min(1, "فصل الانسحاب المختار غير صحيح")
+          .max(3, "فصل الانسحاب المختار غير صحيح"),
+      })
+    ),
+  });
+
+  validationSchema.validateSync(body);
+};
+
+export const updateStudent = async (studentId, student) => {
+  const { supervisor, ...studentData } = student;
+
+  if (supervisor.supervisorID) {
+    studentData.supervisorID = supervisor.supervisorID;
+  } else {
+    const supervisorID = uuidv4();
+    studentData.supervisorID = supervisorID;
+    await awsDocDynamoDbClient.send(
+      new PutCommand({
+        TableName: "Supervisors",
+        Item: {
+          supervisorID: supervisorID,
+          supervisorName: supervisor.supervisorName,
+          normalizedName: normalizeString(supervisor.supervisorName),
+        },
+      })
+    );
+  }
+
+  await awsDocDynamoDbClient.send(
+    new PutCommand({
+      TableName: "Students",
+      Item: {
+        studentID: studentId,
+        ...studentData,
+        updatedAt: Date.now(),
+        normalizedName: normalizeString(studentData.studentName),
+      },
+    })
+  );
+};

@@ -20,12 +20,6 @@ const awsDynamoDbClient =
 
 const awsDocDynamoDbClient = DynamoDBDocumentClient.from(awsDynamoDbClient);
 
-function findNaN(object, keys) {
-  return keys.find(
-    (key) => object[key] !== undefined && isNaN(Number(object[key]))
-  );
-}
-
 export async function getConfig(configName) {
   return (
     (
@@ -100,7 +94,6 @@ export async function getActiveStudents() {
 }
 
 export async function getStudentByID(studentID) {
-  // TODO: get only what is needed
   const student =
     (
       await awsDocDynamoDbClient.send(
@@ -109,6 +102,9 @@ export async function getStudentByID(studentID) {
           Key: {
             studentID,
           },
+
+          ProjectionExpression: `studentID, studentName, levelID, supervisorID, memorizingProgress,
+             revisitProgress, tests, gender, frozenSemesters, joinYear, joinSemester, joinMonth`,
         })
       )
     )?.Item ?? {};

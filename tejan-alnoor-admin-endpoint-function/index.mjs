@@ -3,7 +3,6 @@ import {
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
 
-const SECRET_KEY = "tejan_al_noor";
 import {
   getAccessToken,
   writeToGoogleSheet,
@@ -20,13 +19,20 @@ import {
   addSemesterDetails,
   createStudents,
   getSemester,
+  getStudentById,
   getStudentsBriefSheetRows,
   getStudentsDetailedSheetRows,
-  updateStudents,
+  replaceStudents,
+  searchStudentsByName,
+  searchSupervisorsByName,
+  updateStudent,
   validateStudents,
   validateStudentsAgainstDB,
+  validateUpdateStudentBody,
 } from "./services.mjs";
 import { validateToken } from "./auth.mjs";
+
+const SECRET_KEY = "tejan_al_noor";
 
 let secrets = undefined;
 const awsSecretsClient = new SecretsManagerClient({
@@ -117,10 +123,6 @@ export const handler = async (event) => {
   }
 
   await initPromise;
-
-  if (!path.startsWith("/students")) {
-    return buildResponse(404, "Not Found");
-  }
 
   if (httpMethod === "GET" && path === "/students/summariesFolder") {
     return buildResponse(200, {
@@ -238,8 +240,69 @@ export const handler = async (event) => {
       });
     }
 
-    const response = await updateStudents(body);
+    const response = await replaceStudents(body);
     return buildResponse(200, response);
+  }
+
+  if (httpMethod === "GET" && path === "/students") {
+    if (!queryParams.name) {
+      return buildResponse(400, "Missing name query parameter");
+    }
+    const response = await searchStudentsByName(queryParams.name);
+    return buildResponse(200, response);
+  }
+
+  if (httpMethod === "GET" && path === "/supervisors") {
+    if (!queryParams.name) {
+      return buildResponse(400, "Missing name query parameter");
+    }
+    const response = await searchSupervisorsByName(queryParams.name);
+    return buildResponse(200, response);
+  }
+
+  if (httpMethod === "GET" && path.startsWith("/students/")) {
+    if (path.replace("/students/", "").length === 0) {
+      return buildResponse(400, "Missing student ID");
+    }
+    const studentId = path.replace("/students/", "");
+
+    const student = await getStudentById(studentId, { supervisorName: true });
+
+    if (!student) {
+      return buildResponse(400, "Student not found");
+    }
+
+    return buildResponse(200, student);
+  }
+
+  if (httpMethod === "PUT" && path.startsWith("/students/")) {
+    if (path.replace("/students/", "").length === 0) {
+      return buildResponse(400, "Missing student ID");
+    }
+    const studentId = path.replace("/students/", "");
+
+    const existingStudent = await getStudentById(studentId, {});
+
+    if (!existingStudent) {
+      return buildResponse(400, "Student not found");
+    }
+
+    try {
+      validateUpdateStudentBody(body);
+    } catch (error) {
+      console.error(error);
+      return buildResponse(400, "Bad Request");
+    }
+
+    await updateStudent(studentId, {
+      ...existingStudent,
+      ...body,
+    });
+
+    return buildResponse(200, {
+      ...existingStudent,
+      ...body,
+    });
   }
 
   return buildResponse(404, "Not Found");
