@@ -1180,12 +1180,10 @@ export const validateUpdateStudentBody = (body) => {
         supervisorName: Yup.string().required("Supervisor name is required"),
       })
       .required("يجب اختيار مشرفـ/ـة"),
-    phoneNumber: Yup.string()
-      .matches(
-        /^\d{10}(\d{2})?(\d{2})?$/,
-        "رقم الهاتف يجب أن يتكون من 10 أرقام أو 12 أو 14 رقمًًا مع الكود الدولي "
-      )
-      .required("يجب إدخال رقم الهاتف"),
+    phoneNumber: Yup.string().matches(
+      /(^\d{10}(\d{2})?(\d{2})?$)|()/,
+      "رقم الهاتف يجب أن يتكون من 10 أرقام أو 12 أو 14 رقمًًا مع الكود الدولي "
+    ),
 
     levelID: Yup.string()
       .required("يجب اختيار المستوى")
