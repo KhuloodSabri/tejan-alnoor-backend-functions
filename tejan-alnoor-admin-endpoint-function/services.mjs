@@ -303,6 +303,9 @@ export async function getStudentsDetailedSheetRows(year, semester) {
         presenceAndAbsenceDetails.push(newValue);
 
         if ((i + 1) % 6 === 0) {
+          if (i < studentMissedMeetingsCount) {
+            checksStatuses.push("لم ينضم بعد");
+          }
           if (
             student.withdrawnSemesters?.some(
               (studentSemester) =>
@@ -319,8 +322,14 @@ export async function getStudentsDetailedSheetRows(year, semester) {
             )
           ) {
             checksStatuses.push("تم تجميد الفصل");
-          } else if (i < studentMissedMeetingsCount) {
-            checksStatuses.push("لم ينضم بعد");
+          } else if (
+            student.dismissedSemesters?.some(
+              (studentSemester) =>
+                studentSemester.year === year &&
+                studentSemester.semester === semester
+            )
+          ) {
+            checksStatuses.push("تم  فصل الطالبـ/ـة");
           } else if (absenceTotal - studentMissedMeetingsCount >= 5) {
             checksStatuses.push("فصل");
           } else if (absenceTotal - studentMissedMeetingsCount >= 3) {
