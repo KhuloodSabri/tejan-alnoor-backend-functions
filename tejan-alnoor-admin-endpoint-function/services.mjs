@@ -305,8 +305,7 @@ export async function getStudentsDetailedSheetRows(year, semester) {
         if ((i + 1) % 6 === 0) {
           if (i < studentMissedMeetingsCount) {
             checksStatuses.push("لم ينضم بعد");
-          }
-          if (
+          } else if (
             student.withdrawnSemesters?.some(
               (studentSemester) =>
                 studentSemester.year === year &&
@@ -969,6 +968,7 @@ export async function createStudents(students) {
       revisitProgress: [],
       frozenSemesters: [],
       dismissedSemesters: [],
+      withdrawnSemesters: [],
       normalizedName: normalizeString(student.studentName),
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1108,6 +1108,10 @@ export async function searchStudentsByName(studentName) {
         })
       )
     )?.Items ?? [];
+
+  if (students.length === 0) {
+    return [];
+  }
 
   const studentSupervisorIds = [
     ...new Set(students.map((student) => student.supervisorID)),
