@@ -8,8 +8,16 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
 import { translateNumberToArabic } from "./number.mjs";
-import { normalizeString } from "./utils.mjs";
+import {
+  compareSemesters,
+  getLevelMemorizingDirection,
+  normalizeString,
+} from "./utils.mjs";
 import * as Yup from "yup";
+import {
+  convertAyahProgressToPage,
+  convertPageProgressToAyah,
+} from "./surah.mjs";
 
 const awsDynamoDbClient =
   process.env.DEV === "true"
@@ -95,6 +103,7 @@ function getMemorizingMeetingsPlan(level) {
   const meetingsPerMonth = meetingsPerWeek * weeksPerMonth;
   const meetingsCount = meetingsPerMonth * level.monthsPlanByPage.length;
 
+  // starts from page 2
   const memorizingPlan = [2, ...level.monthsPlanByPage];
 
   const avgExpectedMemorizedPerMonth =
@@ -104,7 +113,7 @@ function getMemorizingMeetingsPlan(level) {
 
   for (let i = 0; i < meetingsCount; i++) {
     let value;
-    const prevMonthIndex = Math.floor(i / (meetingsPerWeek * 4));
+    const prevMonthIndex = Math.floor(i / (meetingsPerWeek * weeksPerMonth));
 
     const monthTargetPage = memorizingPlan[prevMonthIndex + 1];
     const prevMonthTargetPage = memorizingPlan[prevMonthIndex];
@@ -147,6 +156,22 @@ function countSemesters(year, semester, studentYear, studentSemester) {
   }
 
   return (year - studentYear) * 3 + semester - studentSemester + 1;
+}
+
+function sortLevelChanges(studentLevelChanges) {
+  return (studentLevelChanges ?? []).sort((a, b) => {
+    let res = a.semester.year - b.semester.year;
+
+    if (res === 0) {
+      res = a.semester.semester - b.semester.semester;
+
+      if (res === 0) {
+        res = a.semester.month - b.semester.month;
+      }
+    }
+
+    return res;
+  });
 }
 
 export async function getStudentsDetailedSheetRows(year, semester) {
@@ -206,178 +231,352 @@ export async function getStudentsDetailedSheetRows(year, semester) {
     return acc;
   }, {});
 
+  // Semester counts
+  const semesterMonthsCount = semester === 3 ? 1 : 3;
+  const semesterWeeksCount = semesterMonthsCount * 4;
+  const revisitMeetingsPerWeek = 1;
+  const memorizingMeetingsPerWeek = 2;
+  const memorizingMeetingsCount =
+    semesterWeeksCount * memorizingMeetingsPerWeek;
+  const revisitingMeetingsCount = semesterWeeksCount * revisitMeetingsPerWeek;
+  const meetingsCount = memorizingMeetingsCount + revisitingMeetingsCount;
+
   console.log("mapping semester students to rows");
-  const studentsRows = semesterStudents
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .map((student) => {
-      const studentLevel = levelsMap[student.levelID];
-      const studentStartWeek = getStudentStartWeek({ year, semester }, student);
+  const studentsRows = await Promise.all(
+    semesterStudents
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(async (student) => {
+        const studentLevel = levelsMap[student.levelID];
 
-      const semesterMonthsCount = semester === 3 ? 1 : 3;
-      const semesterWeeksCount = semesterMonthsCount * 4;
+        const studentStartWeek = getStudentStartWeek(
+          { year, semester },
+          student
+        );
 
-      const studentMissedMonths =
-        student.joinYear === year && student.joinSemester === semester
-          ? student.joinMonth - 1
-          : 0;
-      const studentMissedWeeks = studentMissedMonths * 4;
+        const studentMissedMonths =
+          student.joinYear === year && student.joinSemester === semester
+            ? student.joinMonth - 1
+            : 0;
+        const studentMissedWeeks = studentMissedMonths * 4;
 
-      const revisitMeetingsPerWeek = 1;
-      const memorizingMeetingsPerWeek = 2;
-      const memorizingMeetingsCount =
-        semesterWeeksCount * memorizingMeetingsPerWeek;
-      const revisitingMeetingsCount =
-        semesterWeeksCount * revisitMeetingsPerWeek;
-      const meetingsCount = memorizingMeetingsCount + revisitingMeetingsCount;
+        const studentMissedMemorizingMeetingsCount = studentMissedWeeks * 2;
+        const studentMissedRevisitingMeetingsCount = studentMissedWeeks;
+        const studentMissedMeetingsCount =
+          studentMissedMemorizingMeetingsCount +
+          studentMissedRevisitingMeetingsCount;
 
-      const studentMissedMemorizingMeetingsCount = studentMissedWeeks * 2;
-      const studentMissedRevisitingMeetingsCount = studentMissedWeeks;
-      const studentMissedMeetingsCount =
-        studentMissedMemorizingMeetingsCount +
-        studentMissedRevisitingMeetingsCount;
+        const studentLevelChanges = student.levelChanges ?? [];
+        const weeksDetails = [];
 
-      const revisitPlan = studentLevel.weeksPlan.slice(
-        studentStartWeek,
-        studentStartWeek + semesterWeeksCount - studentMissedWeeks
-      );
+        const sortedChanges = sortLevelChanges(studentLevelChanges ?? []);
+        const initialLevelId =
+          sortedChanges?.[0]?.fromLevelID ?? student.levelID;
 
-      const memorizingPlan = studentLevel.memorizingDetailedPlan.slice(
-        studentStartWeek * memorizingMeetingsPerWeek
-      );
+        const detailedStudentMemorizingProgress = {
+          asc: 0,
+          desc: 0,
+        };
 
-      const revisitSummary = revisitPlan.map((week) => {
-        if (
-          student.revisitProgress.find(
-            (range) => range[0] <= week[0] && range[1] >= week[1]
-          )
-        ) {
-          return 1; //"✅";
-        }
+        if (getLevelMemorizingDirection(student.levelID) === "desc") {
+          const ascProgress = studentLevelChanges.reduce((acc, change) => {
+            if (getLevelMemorizingDirection(change.fromLevelID) === "asc") {
+              return Math.max(change.memorizingProgress, acc);
+            }
+            return acc;
+          }, 0);
 
-        return 0; // "❌";
-      });
-
-      const preDefaultRevisitFill = Array(
-        studentMissedRevisitingMeetingsCount
-      ).fill(0);
-
-      const postDefaultRevisitFill = Array(
-        Math.max(
-          semesterWeeksCount -
-            revisitSummary.length -
-            preDefaultRevisitFill.length,
-          0
-        )
-      ).fill(0);
-
-      const fullRevisitSummary = [
-        ...preDefaultRevisitFill,
-        ...revisitSummary,
-        ...postDefaultRevisitFill,
-      ];
-
-      const presenceAndAbsenceDetails = [];
-      let presenceTotal = 0;
-      let absenceTotal = 0;
-      const checksStatuses = [];
-
-      for (let i = 0; i < meetingsCount; i++) {
-        let newValue = 0;
-        if (i < studentMissedMeetingsCount) {
-          newValue = 0;
-        } else if (Math.floor(i + 1) % 3 === 0) {
-          newValue = fullRevisitSummary[Math.floor(i / 3)];
+          detailedStudentMemorizingProgress.asc = ascProgress ?? 0;
+          detailedStudentMemorizingProgress.desc = student.memorizingProgress;
         } else {
-          const expectedMemorized =
-            memorizingPlan[
-              i - Math.floor(i / 3) - studentMissedMemorizingMeetingsCount
-            ];
-          newValue = student.memorizingProgress >= expectedMemorized ? 1 : 0;
+          const descProgress = studentLevelChanges.reduce((acc, change) => {
+            if (getLevelMemorizingDirection(change.fromLevelID) === "desc") {
+              return Math.max(change.memorizingProgress, acc);
+            }
+            return acc;
+          }, 0);
+
+          detailedStudentMemorizingProgress.desc = descProgress ?? 0;
+          detailedStudentMemorizingProgress.asc = student.memorizingProgress;
         }
 
-        if (newValue === 1) {
-          presenceTotal++;
-        } else {
-          absenceTotal++;
-        }
-        presenceAndAbsenceDetails.push(newValue);
+        for (let i = 0; i < semesterWeeksCount; i++) {
+          if (i < studentMissedWeeks) {
+            continue;
+          }
 
-        if ((i + 1) % 6 === 0) {
-          if (i < studentMissedMeetingsCount) {
-            checksStatuses.push("لم ينضم بعد");
-          } else if (
-            student.withdrawnSemesters?.some(
-              (studentSemester) =>
-                studentSemester.year === year &&
-                studentSemester.semester === semester
-            )
-          ) {
-            checksStatuses.push("الطالبـ/ـة منسحب/ة");
-          } else if (
-            student.frozenSemesters?.some(
-              (studentSemester) =>
-                studentSemester.year === year &&
-                studentSemester.semester === semester
-            )
-          ) {
-            checksStatuses.push("تم تجميد الفصل");
-          } else if (
-            student.dismissedSemesters?.some(
-              (studentSemester) =>
-                studentSemester.year === year &&
-                studentSemester.semester === semester
-            )
-          ) {
-            checksStatuses.push("تم  فصل الطالبـ/ـة");
-          } else if (absenceTotal - studentMissedMeetingsCount >= 5) {
-            checksStatuses.push("فصل");
-          } else if (absenceTotal - studentMissedMeetingsCount >= 3) {
-            checksStatuses.push("تحذير");
+          // month of semester
+          const month = Math.floor(i / 4) + 1;
+
+          const lastLevelChange = sortedChanges.find((levelChange) => {
+            return (
+              compareSemesters(levelChange.semester, {
+                year,
+                semester,
+                month,
+              }) <= 0
+            );
+          });
+
+          if (lastLevelChange) {
+            let newLevelPlanStartMonth = 0;
+            //levelID 0 has different memorizing direction than other levels
+            if (
+              getLevelMemorizingDirection(lastLevelChange.toLevelID) !==
+              getLevelMemorizingDirection(lastLevelChange.fromLevelID)
+            ) {
+              const prevChangeFromSameDirection = sortedChanges.find(
+                (levelChange) => {
+                  // needs to be before
+                  if (
+                    compareSemesters(
+                      levelChange.semester,
+                      lastLevelChange.semester
+                    ) >= 0
+                  ) {
+                    return false;
+                  }
+
+                  return (
+                    getLevelMemorizingDirection(lastLevelChange.toLevelID) ===
+                    getLevelMemorizingDirection(levelChange.fromLevelID)
+                  );
+                }
+              );
+
+              if (prevChangeFromSameDirection) {
+                newLevelPlanStartMonth = levelsMap[
+                  lastLevelChange.toLevelID
+                ].monthsPlanByPage.findIndex(
+                  (monthProgress) =>
+                    prevChangeFromSameDirection.memorizingProgress <
+                    monthProgress
+                );
+              } else {
+                newLevelPlanStartMonth = 0;
+              }
+            } else {
+              newLevelPlanStartMonth = levelsMap[
+                lastLevelChange.toLevelID
+              ].monthsPlanByPage.findIndex(
+                (monthProgress) =>
+                  lastLevelChange.memorizingProgress < monthProgress
+              );
+            }
+
+            const lastLevelChangeStartWeek =
+              (lastLevelChange.semester.month - 1) * 4 +
+              getStudentStartWeek(
+                {
+                  year: lastLevelChange.semester.year,
+                  semester: lastLevelChange.semester.semester,
+                },
+                student
+              );
+
+            let shift = newLevelPlanStartMonth * 4 - lastLevelChangeStartWeek;
+
+            weeksDetails.push({
+              levelID: lastLevelChange.toLevelID,
+              weeklyPlanIndex: studentStartWeek + shift + i,
+            });
           } else {
-            checksStatuses.push("طبيعي");
+            weeksDetails.push({
+              levelID: initialLevelId,
+              weeklyPlanIndex: studentStartWeek + i,
+            });
           }
         }
-      }
 
-      return [
-        student.studentID,
-        `=HYPERLINK( "https://khuloodsabri.github.io/tejan-alnoor/students/${student.studentID}","صفحة الطالب/ة")`,
-        supervisorsMap[student.supervisorID]?.supervisorName,
-        student.studentName,
-        Number(student.memorizingProgress),
-        student.gender === "male" ? "ذكر" : "أنثى",
-        `'${student.phoneNumber}`,
-        student.joinYear,
-        year,
-        semester,
-        student.joinSemester,
-        student.joinMonth,
-        student.groupNumber,
-        countSemesters(year, semester, student.joinYear, student.joinSemester),
-        studentLevel.levelName,
-        Math.floor(studentStartWeek / 4) + 1,
-        student.status,
-        presenceTotal,
-        absenceTotal,
-        ...(checksStatuses.length < 6
-          ? [
-              ...checksStatuses,
-              ...Array(6 - checksStatuses.length).fill("الفصل الصيفي شهر واحد"),
-            ]
-          : checksStatuses),
-        ...(presenceAndAbsenceDetails.length < 36
-          ? [
-              ...presenceAndAbsenceDetails,
-              ...Array(36 - presenceAndAbsenceDetails.length).fill(0),
-            ]
-          : presenceAndAbsenceDetails),
-        Number(student.tests[year]?.[semester]?.[1]),
-        Number(student.tests[year]?.[semester]?.[2]),
-        Number(student.tests[year]?.[semester]?.[3]),
-        Number(student.tests[year]?.[semester]?.[4]),
-        Number(student.tests[year]?.[semester]?.[5]),
-      ];
-    });
+        const revisitPlan = await Promise.all(
+          weeksDetails.map(async (weekDetails) => {
+            const range =
+              levelsMap[weekDetails.levelID].weeksPlan[
+                weekDetails.weeklyPlanIndex
+              ];
+
+            if (
+              levelsMap[weekDetails.levelID].progressUnit !==
+              levelsMap[student.levelID].progressUnit
+            ) {
+              // convert plan to the final student level map
+              // These conversions will use the cached array not external API
+              if (levelsMap[student.levelID].progressUnit === "ayah") {
+                return (await convertPageProgressToAyah([range]))[0];
+              } else {
+                return (await convertAyahProgressToPage([range]))[0];
+              }
+            }
+
+            return range;
+          })
+        );
+
+        const memorizingPlan = weeksDetails.flatMap((weekDetails, index) => {
+          const plan = levelsMap[weekDetails.levelID].memorizingDetailedPlan;
+          const startIndex = weekDetails.weeklyPlanIndex * 2;
+          const direction = weekDetails.levelID === 0 ? "desc" : "asc";
+          return [
+            {
+              pages: plan[startIndex],
+              direction,
+            },
+            {
+              pages: plan[startIndex + 1],
+              direction,
+            },
+          ];
+        });
+
+        const revisitSummary = revisitPlan.map((week) => {
+          // plan is not defined
+          if (!week) {
+            return 0;
+          }
+
+          if (
+            student.revisitProgress.find(
+              (range) => range[0] <= week[0] && range[1] >= week[1]
+            )
+          ) {
+            return 1; //"✅";
+          }
+
+          return 0; // "❌";
+        });
+
+        const preDefaultRevisitFill = Array(
+          studentMissedRevisitingMeetingsCount
+        ).fill(0);
+
+        // not needed
+        const postDefaultRevisitFill = Array(
+          Math.max(
+            semesterWeeksCount -
+              revisitSummary.length -
+              preDefaultRevisitFill.length,
+            0
+          )
+        ).fill(0);
+
+        const fullRevisitSummary = [
+          ...preDefaultRevisitFill,
+          ...revisitSummary,
+          ...postDefaultRevisitFill,
+        ];
+
+        const presenceAndAbsenceDetails = [];
+        let presenceTotal = 0;
+        let absenceTotal = 0;
+        const checksStatuses = [];
+
+        for (let i = 0; i < meetingsCount; i++) {
+          let newValue = 0;
+          if (i < studentMissedMeetingsCount) {
+            newValue = 0;
+          } else if (Math.floor(i + 1) % 3 === 0) {
+            newValue = fullRevisitSummary[Math.floor(i / 3)];
+          } else {
+            const memorizingPlanIndex =
+              i - Math.floor(i / 3) - studentMissedMemorizingMeetingsCount;
+            const expectedMemorized = memorizingPlan[memorizingPlanIndex].pages;
+            const actualMemorized =
+              detailedStudentMemorizingProgress[
+                memorizingPlan[memorizingPlanIndex].direction
+              ];
+            newValue = actualMemorized >= expectedMemorized ? 1 : 0;
+          }
+
+          if (newValue === 1) {
+            presenceTotal++;
+          } else {
+            absenceTotal++;
+          }
+          presenceAndAbsenceDetails.push(newValue);
+
+          if ((i + 1) % 6 === 0) {
+            if (i < studentMissedMeetingsCount) {
+              checksStatuses.push("لم ينضم بعد");
+            } else if (
+              student.withdrawnSemesters?.some(
+                (studentSemester) =>
+                  studentSemester.year === year &&
+                  studentSemester.semester === semester
+              )
+            ) {
+              checksStatuses.push("الطالبـ/ـة منسحب/ة");
+            } else if (
+              student.frozenSemesters?.some(
+                (studentSemester) =>
+                  studentSemester.year === year &&
+                  studentSemester.semester === semester
+              )
+            ) {
+              checksStatuses.push("تم تجميد الفصل");
+            } else if (
+              student.dismissedSemesters?.some(
+                (studentSemester) =>
+                  studentSemester.year === year &&
+                  studentSemester.semester === semester
+              )
+            ) {
+              checksStatuses.push("تم  فصل الطالبـ/ـة");
+            } else if (absenceTotal - studentMissedMeetingsCount >= 5) {
+              checksStatuses.push("فصل");
+            } else if (absenceTotal - studentMissedMeetingsCount >= 3) {
+              checksStatuses.push("تحذير");
+            } else {
+              checksStatuses.push("طبيعي");
+            }
+          }
+        }
+
+        return [
+          student.studentID,
+          `=HYPERLINK( "https://khuloodsabri.github.io/tejan-alnoor/students/${student.studentID}","صفحة الطالب/ة")`,
+          supervisorsMap[student.supervisorID]?.supervisorName,
+          student.studentName,
+          Number(student.memorizingProgress),
+          student.gender === "male" ? "ذكر" : "أنثى",
+          `'${student.phoneNumber}`,
+          student.joinYear,
+          year,
+          semester,
+          student.joinSemester,
+          student.joinMonth,
+          student.groupNumber,
+          countSemesters(
+            year,
+            semester,
+            student.joinYear,
+            student.joinSemester
+          ),
+          studentLevel.levelName,
+          Math.floor(studentStartWeek / 4) + student.joinMonth,
+          student.status,
+          presenceTotal,
+          absenceTotal,
+          ...(checksStatuses.length < 6
+            ? [
+                ...checksStatuses,
+                ...Array(6 - checksStatuses.length).fill(
+                  "الفصل الصيفي شهر واحد"
+                ),
+              ]
+            : checksStatuses),
+          ...(presenceAndAbsenceDetails.length < 36
+            ? [
+                ...presenceAndAbsenceDetails,
+                ...Array(36 - presenceAndAbsenceDetails.length).fill(0),
+              ]
+            : presenceAndAbsenceDetails),
+          Number(student.tests[year]?.[semester]?.[1]),
+          Number(student.tests[year]?.[semester]?.[2]),
+          Number(student.tests[year]?.[semester]?.[3]),
+          Number(student.tests[year]?.[semester]?.[4]),
+          Number(student.tests[year]?.[semester]?.[5]),
+        ];
+      })
+  );
 
   return studentsRows;
 }
@@ -1056,7 +1255,7 @@ export async function replaceStudents(students) {
 
 export async function getStudentById(studentId, includeSubresources = {}) {
   console.log("getting student", studentId, "----", includeSubresources);
-  const student =
+  let student =
     (
       await awsDocDynamoDbClient.send(
         new GetCommand({
@@ -1068,27 +1267,27 @@ export async function getStudentById(studentId, includeSubresources = {}) {
       )
     )?.Item ?? null;
 
-  if (!includeSubresources.supervisorName) {
-    return student;
+  if (includeSubresources.supervisorName) {
+    const supervisor =
+      (
+        await awsDocDynamoDbClient.send(
+          new GetCommand({
+            TableName: "Supervisors",
+            Key: {
+              supervisorID: student.supervisorID,
+            },
+            ProjectionExpression: "supervisorID, supervisorName",
+          })
+        )
+      )?.Item ?? null;
+
+    student = {
+      ...student,
+      supervisorName: supervisor?.supervisorName,
+    };
   }
 
-  const supervisor =
-    (
-      await awsDocDynamoDbClient.send(
-        new GetCommand({
-          TableName: "Supervisors",
-          Key: {
-            supervisorID: student.supervisorID,
-          },
-          ProjectionExpression: "supervisorID, supervisorName",
-        })
-      )
-    )?.Item ?? null;
-
-  return {
-    ...student,
-    supervisorName: supervisor?.supervisorName,
-  };
+  return student;
 }
 
 export async function searchStudentsByName(studentName) {
@@ -1273,7 +1472,7 @@ export const validateUpdateStudentBody = (body) => {
   validationSchema.validateSync(body);
 };
 
-export const updateStudent = async (studentId, student) => {
+export const updateStudent = async (studentId, student, oldStudent) => {
   const { supervisor, ...studentData } = student;
 
   if (supervisor.supervisorID) {
@@ -1293,6 +1492,8 @@ export const updateStudent = async (studentId, student) => {
     );
   }
 
+  await setStudentLevelUpdates(oldStudent, studentData);
+
   await awsDocDynamoDbClient.send(
     new PutCommand({
       TableName: "Students",
@@ -1305,3 +1506,203 @@ export const updateStudent = async (studentId, student) => {
     })
   );
 };
+
+export async function getLevels() {
+  return (
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Levels",
+        })
+      )
+    )?.Items ?? []
+  );
+}
+
+async function setStudentLevelUpdates(oldStudent, newStudent) {
+  const oldLevelChanges = (oldStudent.levelChanges ?? []).sort((a, b) =>
+    compareSemesters(a.semester, b.semester)
+  );
+
+  const newLevelChanges = (newStudent.levelChanges ?? []).sort((a, b) =>
+    compareSemesters(a.semester, b.semester)
+  );
+
+  const getChangeKey = (change) =>
+    `${change.semester.year}-${change.semester.semester}-${change.semester.month}-${change.fromLevelID}-${change.toLevelID}`;
+
+  const oldLevelChangesLookup = new Set(oldLevelChanges.map(getChangeKey));
+  const newLevelChangesLookup = new Set(newLevelChanges.map(getChangeKey));
+
+  const removedLevelChanges = oldLevelChanges.filter(
+    (change) => !newLevelChangesLookup.has(getChangeKey(change))
+  );
+
+  const addedLevelChanges = newLevelChanges.filter(
+    (change) => !oldLevelChangesLookup.has(getChangeKey(change))
+  );
+
+  const currentSemesterDetails =
+    (
+      await awsDocDynamoDbClient.send(
+        new GetCommand({
+          TableName: "Configs",
+          Key: {
+            name: "currentSemester",
+          },
+        })
+      )
+    )?.Item?.value ?? null;
+
+  for (const addedLevelChange of addedLevelChanges) {
+    addedLevelChange.memorizingProgress = oldStudent.memorizingProgress;
+
+    if (
+      compareSemesters(addedLevelChange.semester, currentSemesterDetails) == 0
+    ) {
+      if (newStudent.levelID !== addedLevelChange.toLevelID) {
+        throw new Error(
+          "invalid new level ID, the level ID in the current change does not match"
+        );
+      }
+    }
+  }
+
+  for (const removedLevelChange of removedLevelChanges) {
+    if (compareSemesters(removedLevelChange, currentSemesterDetails) < 0) {
+      throw new Error("cannot remove level changes of past semesters/months");
+    }
+
+    // changed memorizing direction
+    if (
+      getLevelMemorizingDirection(removedLevelChange.fromLevelID) !==
+      getLevelMemorizingDirection(removedLevelChange.toLevelID)
+    ) {
+      let prevChangeSameDirIndex = -1;
+
+      for (let i = oldLevelChanges.length - 1; i >= 0; i--) {
+        if (
+          compareSemesters(
+            oldLevelChanges[i].semester,
+            removedLevelChange.semester
+          ) < 0 &&
+          getLevelMemorizingDirection(oldLevelChanges[i].fromLevelID) ===
+            getLevelMemorizingDirection(removedLevelChange.toLevelID)
+        ) {
+          prevChangeSameDirIndex = i;
+        }
+      }
+
+      if (
+        (prevChangeSameDirIndex === -1 && oldStudent.memorizingProgress > 0) ||
+        (prevChangeSameDirIndex !== -1 &&
+          oldLevelChanges[prevChangeSameDirIndex].memorizingProgress !==
+            oldStudent.memorizingProgress)
+      ) {
+        throw new Error(
+          "لا يمكن حذف تغيير من أو إلى جزء عم اذا كان الطالب حقق إانجازا بعد هذا التغيير"
+        );
+      }
+    }
+  }
+
+  if (newStudent.levelID !== oldStudent.levelID) {
+    const progressUpdates = await getUpdatedProgressAfterLevelChange(
+      oldStudent,
+      newStudent.levelID
+    );
+
+    for (const key of Object.keys(progressUpdates)) {
+      newStudent[key] = progressUpdates[key];
+    }
+  }
+}
+
+async function getUpdatedProgressAfterLevelChange(oldStudent, newLevelID) {
+  const studentProgressUpdates = {
+    revisitProgress: oldStudent.revisitProgress,
+    memorizingProgress: oldStudent.memorizingProgress,
+  };
+
+  if (newLevelID !== oldStudent.levelID) {
+    const oldLevel =
+      (
+        await awsDocDynamoDbClient.send(
+          new GetCommand({
+            TableName: "Levels",
+            Key: {
+              levelID: oldStudent.levelID,
+            },
+            ProjectionExpression: "levelID, progressUnit",
+          })
+        )
+      )?.Item ?? null;
+
+    const newLevel =
+      (
+        await awsDocDynamoDbClient.send(
+          new GetCommand({
+            TableName: "Levels",
+            Key: {
+              levelID: newLevelID,
+            },
+            ProjectionExpression: "levelID, progressUnit",
+          })
+        )
+      )?.Item ?? null;
+
+    if (oldLevel.progressUnit != newLevel.progressUnit) {
+      if (
+        oldLevel.progressUnit === "ayah" &&
+        newLevel.progressUnit === "page"
+      ) {
+        const newRevisitProgress = await convertAyahProgressToPage(
+          oldStudent.revisitProgress
+        );
+
+        studentProgressUpdates.revisitProgress = newRevisitProgress;
+      } else {
+        const newRevisitProgress = await convertPageProgressToAyah(
+          oldStudent.revisitProgress
+        );
+
+        studentProgressUpdates.revisitProgress = newRevisitProgress;
+      }
+    }
+
+    studentProgressUpdates.memorizingProgress = oldStudent.memorizingProgress;
+
+    if (
+      getLevelMemorizingDirection(newLevelID) !==
+      getLevelMemorizingDirection(oldStudent.levelID)
+    ) {
+      const oldLevelChanges = (oldStudent.levelChanges ?? []).sort((a, b) =>
+        compareSemesters(a.semester, b.semester)
+      );
+
+      const currentSemesterDetails =
+        (
+          await awsDocDynamoDbClient.send(
+            new GetCommand({
+              TableName: "Configs",
+              Key: {
+                name: "currentSemester",
+              },
+            })
+          )
+        )?.Item?.value ?? null;
+
+      const prevChangeWithMemInSameDirection = oldLevelChanges.findLast(
+        (change) =>
+          getLevelMemorizingDirection(change.fromLevelID) ===
+            getLevelMemorizingDirection(newLevelID) &&
+          compareSemesters(change.semester, currentSemesterDetails) <= 0
+      );
+
+      studentProgressUpdates.memorizingProgress =
+        prevChangeWithMemInSameDirection?.memorizingProgress ?? 0;
+    }
+  }
+
+  return studentProgressUpdates;
+}

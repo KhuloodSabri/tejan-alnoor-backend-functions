@@ -12,3 +12,38 @@ export const normalizeString = (name) => {
 
   return result;
 };
+
+export const compareSemesters = (semester1, semester2) => {
+  if (semester1.year < semester2.year) {
+    return -1;
+  }
+
+  if (semester1.year > semester2.year) {
+    return 1;
+  }
+
+  if (semester1.semester < semester2.semester) {
+    return -1;
+  }
+
+  if (semester1.semester > semester2.semester) {
+    return 1;
+  }
+
+  if (semester1.month < semester2.month) {
+    return -1;
+  }
+
+  if (semester1.month > semester2.month) {
+    return 1;
+  }
+
+  return 0;
+};
+
+export const getLevelMemorizingDirection = (levelID) => {
+  if (levelID === 0) {
+    return "desc";
+  }
+  return "asc";
+};

@@ -104,7 +104,8 @@ export async function getStudentByID(studentID) {
           },
 
           ProjectionExpression: `studentID, studentName, levelID, supervisorID, memorizingProgress,
-             revisitProgress, tests, gender, frozenSemesters, joinYear, joinSemester, joinMonth`,
+             revisitProgress, tests, gender, frozenSemesters, joinYear, joinSemester, joinMonth,
+             levelChanges`,
         })
       )
     )?.Item ?? {};

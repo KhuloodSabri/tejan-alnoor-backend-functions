@@ -18,6 +18,7 @@ import {
 import {
   addSemesterDetails,
   createStudents,
+  getLevels,
   getSemester,
   getStudentById,
   getStudentsBriefSheetRows,
@@ -294,15 +295,24 @@ export const handler = async (event) => {
       return buildResponse(400, "Bad Request");
     }
 
-    await updateStudent(studentId, {
-      ...existingStudent,
-      ...body,
-    });
+    await updateStudent(
+      studentId,
+      {
+        ...existingStudent,
+        ...body,
+      },
+      existingStudent
+    );
 
     return buildResponse(200, {
       ...existingStudent,
       ...body,
     });
+  }
+
+  if (httpMethod === "GET" && path === "/levels") {
+    const response = await getLevels();
+    return buildResponse(200, response);
   }
 
   return buildResponse(404, "Not Found");
