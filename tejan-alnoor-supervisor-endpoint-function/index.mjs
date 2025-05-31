@@ -9,6 +9,7 @@ import {
   validateUpdateStudentRequest,
   updateStudent,
   getConfig,
+  getLevels,
 } from "./services.mjs";
 
 const SECRET_KEY = "tejan_al_noor";
@@ -78,6 +79,10 @@ export const handler = async (event) => {
 
   if (path === "/configs/currentSemester") {
     return buildResponse(200, await getConfig("currentSemester"));
+  }
+
+  if (path === "/levels") {
+    return buildResponse(200, await getLevels());
   }
 
   if (!path.startsWith("/students")) {

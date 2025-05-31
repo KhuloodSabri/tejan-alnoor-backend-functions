@@ -1499,6 +1499,7 @@ export const updateStudent = async (studentId, student, oldStudent) => {
       TableName: "Students",
       Item: {
         studentID: studentId,
+        ...oldStudent,
         ...studentData,
         updatedAt: Date.now(),
         normalizedName: normalizeString(studentData.studentName),

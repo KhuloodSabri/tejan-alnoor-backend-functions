@@ -35,6 +35,18 @@ export async function getConfig(configName) {
   );
 }
 
+export async function getLevels() {
+  return (
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Levels",
+        })
+      )
+    )?.Items ?? []
+  );
+}
+
 export async function getActiveStudents() {
   const activeStudents =
     (
