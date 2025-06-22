@@ -7,6 +7,11 @@ import {
 import csv from "csv-parser";
 import fs from "fs";
 import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { promptUser } from "./utils.mjs";
+
+const defaultBackupFolderPath = "C:/Users/hp/Downloads/";
+const defaultBackupDate = "2025-6-23";
+const defaultTablesToFill = ["Levels", "Students", "Supervisors", "Configs"];
 
 // Function to convert DynamoDB format to regular JavaScript object
 function convertFromDynamoDBFormat(value) {
@@ -80,6 +85,46 @@ async function fillDataFromCsv(docClient, tableName, filePath) {
 }
 
 export async function run() {
+  const backupFolderPath =
+    (await promptUser(
+      `Enter backup folder path press enter to use the default (default: ${defaultBackupFolderPath}): `,
+      defaultBackupFolderPath
+    )) || defaultBackupFolderPath;
+
+  const backupDate =
+    (await promptUser(
+      `Enter backup date in format YYYY-M-DD press enter to use the default (default: ${defaultBackupDate}): `,
+      defaultBackupDate
+    )) || defaultBackupDate;
+
+  const tablesToFill =
+    (await promptUser(
+      `Enter tables to fill separated by commas press enter to use the default (default: ${defaultTablesToFill.join(
+        ", "
+      )}): `,
+      defaultTablesToFill.join(", ")
+    )) || defaultTablesToFill.join(", ");
+
+  console.log("Will fill backups as follows:");
+  const tablesBackupFiles = tablesToFill.split(",").reduce((acc, tableName) => {
+    acc[
+      tableName.trim()
+    ] = `${backupFolderPath.trim()}${tableName.trim()}-${backupDate.trim()}.csv`;
+    return acc;
+  }, {});
+  for (const tableName of Object.keys(tablesBackupFiles)) {
+    console.log(
+      `- Table ${tableName}: Backup: ${tablesBackupFiles[tableName]}.csv`
+    );
+  }
+
+  const confirmationRes = await promptUser("Press y to continue...");
+
+  if (confirmationRes.toLowerCase() !== "y") {
+    console.log("Operation cancelled by user.");
+    return;
+  }
+
   const client = new DynamoDBClient({
     // region: "eu-north-1",
     region: "local",
@@ -88,19 +133,12 @@ export async function run() {
 
   const awsDocDynamoDbClient = DynamoDBDocumentClient.from(client);
 
-  const tablesToFill = {
-    Levels: "C:/Users/hp/Downloads/prodBackup/Levels-2024-12-8.csv",
-    Students: "C:/Users/hp/Downloads/prodBackup/Students-2024-12-8.csv",
-    Supervisors: "C:/Users/hp/Downloads/prodBackup/Supervisors-2024-12-8.csv",
-    Configs: "C:/Users/hp/Downloads/prodBackup/Configs-2024-12-8.csv",
-  };
-
-  for (const tableName in tablesToFill) {
+  for (const tableName in tablesBackupFiles) {
     console.log(`Filling data for table: ${tableName}`);
     await fillDataFromCsv(
       awsDocDynamoDbClient,
       tableName,
-      tablesToFill[tableName]
+      tablesBackupFiles[tableName]
     );
   }
 }

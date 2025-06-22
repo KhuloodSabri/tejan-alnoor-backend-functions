@@ -1,12 +1,13 @@
 // Import the required AWS SDK clients and commands for Node.js
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
+
 import {
   GetCommand,
   DynamoDBDocumentClient,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import fs from "fs";
-import { promptUser } from "./utils.mjs";
+import { promptUser, waitForTableToBecomeActive } from "./utils.mjs";
 
 function getVersions() {
   const files = fs.readdirSync("./versions");
@@ -35,19 +36,45 @@ function getDbClient(env) {
 
 async function getCurrentVersion(client) {
   const awsDocDynamoDbClient = DynamoDBDocumentClient.from(client);
-  const currentVersion = (
-    await awsDocDynamoDbClient.send(
-      new GetCommand({
-        TableName: "Configs",
-        Key: {
-          name: "currentVersion",
-        },
-      })
-    )
-  )?.Item?.value;
+  try {
+    const currentVersion = (
+      await awsDocDynamoDbClient.send(
+        new GetCommand({
+          TableName: "Configs",
+          Key: {
+            name: "currentVersion",
+          },
+        })
+      )
+    )?.Item?.value;
 
-  console.log("Current version:", currentVersion);
-  return currentVersion;
+    console.log("Current version:", currentVersion);
+    return currentVersion;
+  } catch (error) {
+    if (error.name === "ResourceNotFoundException") {
+      console.log(
+        "The Configs table does not exist. Will create it and set the current version to null."
+      );
+      const configTableParams = {
+        TableName: "Configs", // Name of the table
+        KeySchema: [
+          { AttributeName: "name", KeyType: "HASH" }, // Partition key
+        ],
+        AttributeDefinitions: [{ AttributeName: "name", AttributeType: "S" }],
+        BillingMode: "PAY_PER_REQUEST", // Set billing mode to on-demand (pay-per-request)
+      };
+
+      const studentCommand = new CreateTableCommand(configTableParams);
+      await client.send(studentCommand);
+
+      await waitForTableToBecomeActive(client, "Configs");
+    } else {
+      console.error("Error fetching current version:", error);
+      throw error;
+    }
+  }
+
+  return null; // If the table does not exist, return null
 }
 
 async function run(env, targetVersion) {
