@@ -54,18 +54,18 @@ export async function up(client) {
     );
   }
 
-  await updateStudentsFromCsv(
-    "versions/2024-09-28-all-students-details.csv",
-    awsDocDynamoDbClient,
-    async (student, _row) => {
-      const createdDate = new Date();
-      createdDate.setMonth(createdDate.getMonth() - 2);
-      const createdTimeStamp = createdDate.getTime();
-      await awsDocDynamoDbClient.send(
-        getUpdateCommand(student, createdTimeStamp)
-      );
-    }
-  );
+  // await updateStudentsFromCsv(
+  //   "versions/2024-09-28-all-students-details.csv",
+  //   awsDocDynamoDbClient,
+  //   async (student, _row) => {
+  //     const createdDate = new Date();
+  //     createdDate.setMonth(createdDate.getMonth() - 2);
+  //     const createdTimeStamp = createdDate.getTime();
+  //     await awsDocDynamoDbClient.send(
+  //       getUpdateCommand(student, createdTimeStamp)
+  //     );
+  //   }
+  // );
 }
 
 export async function down(client) {
