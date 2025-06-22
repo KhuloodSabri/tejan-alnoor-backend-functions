@@ -35,6 +35,18 @@ export async function getConfig(configName) {
   );
 }
 
+export async function getLevels() {
+  return (
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "Levels",
+        })
+      )
+    )?.Items ?? []
+  );
+}
+
 export async function getActiveStudents() {
   const activeStudents =
     (
@@ -104,7 +116,8 @@ export async function getStudentByID(studentID) {
           },
 
           ProjectionExpression: `studentID, studentName, levelID, supervisorID, memorizingProgress,
-             revisitProgress, tests, gender, frozenSemesters, joinYear, joinSemester, joinMonth`,
+             revisitProgress, tests, gender, frozenSemesters, joinYear, joinSemester, joinMonth,
+             levelChanges`,
         })
       )
     )?.Item ?? {};

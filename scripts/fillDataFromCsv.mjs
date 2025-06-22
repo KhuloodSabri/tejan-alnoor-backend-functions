@@ -89,10 +89,10 @@ export async function run() {
   const awsDocDynamoDbClient = DynamoDBDocumentClient.from(client);
 
   const tablesToFill = {
-    Levels: "C:/Users/hp/Downloads/prodBackup/Levels-2024-12-8.csv",
-    Students: "C:/Users/hp/Downloads/prodBackup/Students-2024-12-8.csv",
-    Supervisors: "C:/Users/hp/Downloads/prodBackup/Supervisors-2024-12-8.csv",
-    Configs: "C:/Users/hp/Downloads/prodBackup/Configs-2024-12-8.csv",
+    Levels: "C:/Users/hp/Downloads/Levels-2025-5-31.csv",
+    Students: "C:/Users/hp/Downloads/Students-2025-5-31.csv",
+    Supervisors: "C:/Users/hp/Downloads/Supervisors-2025-5-31.csv",
+    Configs: "C:/Users/hp/Downloads/Configs-2025-5-31.csv",
   };
 
   for (const tableName in tablesToFill) {
