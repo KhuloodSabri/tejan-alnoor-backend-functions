@@ -12,7 +12,7 @@ export const DRIVE_FOLDER_ID =
 
 export const TEMPLATE_SPREADSHEET_ID =
   process.env.DEV === "true"
-    ? "192lfxdUmKuFGwqLI7PAN-0J_QQWWOZfbisABiN2aZCs"
+    ? "1igMG9tlsSCoGhdf8D3K3IGMmiBz9DtwVnhlW42H_UO0"
     : "1AiCskd_4VRg03rqtSqViQ1PSaWS3v7TKVKveVbIdQQk";
 
 function numberToColumnName(number) {

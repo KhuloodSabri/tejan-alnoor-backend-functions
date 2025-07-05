@@ -175,6 +175,19 @@ function sortLevelChanges(studentLevelChanges) {
 }
 
 export async function getStudentsDetailedSheetRows(year, semester) {
+  const currentSemesterDetails =
+    (
+      await awsDocDynamoDbClient.send(
+        new GetCommand({
+          TableName: "Configs",
+          Key: {
+            name: "currentSemester",
+          },
+        })
+      )
+    )?.Item?.value ?? null;
+
+  console.log("getting semester students");
   const semesterStudents =
     (
       await awsDocDynamoDbClient.send(
@@ -193,8 +206,6 @@ export async function getStudentsDetailedSheetRows(year, semester) {
         })
       )
     )?.Items ?? [];
-
-  console.log("semester students count", semesterStudents.length);
 
   console.log("getting levels");
   const levels =
@@ -272,6 +283,7 @@ export async function getStudentsDetailedSheetRows(year, semester) {
         const initialLevelId =
           sortedChanges?.[0]?.fromLevelID ?? student.levelID;
 
+        // Make sure to preserve previous memorizing in different direction (Juz' Amma is in different direction than others)
         const detailedStudentMemorizingProgress = {
           asc: 0,
           desc: 0,
@@ -299,6 +311,10 @@ export async function getStudentsDetailedSheetRows(year, semester) {
           detailedStudentMemorizingProgress.asc = student.memorizingProgress;
         }
 
+        // Make sure to not handle a student who moved to level X after some time the same as a student who started
+        // in level X. The rule is: we search in the monthly plan for the max month's progress that the student
+        // already finished when moving to level X. We consider that after the level change the student will
+        // commit to this plan starting from this plan month
         for (let i = 0; i < semesterWeeksCount; i++) {
           if (i < studentMissedWeeks) {
             continue;
@@ -307,7 +323,7 @@ export async function getStudentsDetailedSheetRows(year, semester) {
           // month of semester
           const month = Math.floor(i / 4) + 1;
 
-          const lastLevelChange = sortedChanges.find((levelChange) => {
+          const lastLevelChange = sortedChanges.findLast((levelChange) => {
             return (
               compareSemesters(levelChange.semester, {
                 year,
@@ -387,6 +403,7 @@ export async function getStudentsDetailedSheetRows(year, semester) {
           }
         }
 
+        // build the revisit plan for the student
         const revisitPlan = await Promise.all(
           weeksDetails.map(async (weekDetails) => {
             const range =
@@ -411,10 +428,10 @@ export async function getStudentsDetailedSheetRows(year, semester) {
           })
         );
 
-        const memorizingPlan = weeksDetails.flatMap((weekDetails, index) => {
+        const memorizingPlan = weeksDetails.flatMap((weekDetails) => {
           const plan = levelsMap[weekDetails.levelID].memorizingDetailedPlan;
           const startIndex = weekDetails.weeklyPlanIndex * 2;
-          const direction = weekDetails.levelID === 0 ? "desc" : "asc";
+          const direction = getLevelMemorizingDirection(weekDetails.levelID);
           return [
             {
               pages: plan[startIndex],
@@ -530,6 +547,23 @@ export async function getStudentsDetailedSheetRows(year, semester) {
           }
         }
 
+        const isCurrentSemester =
+          currentSemesterDetails.year === year &&
+          currentSemesterDetails.semester === semester;
+
+        const studentCurrentSemesterMonth =
+          Math.floor(studentStartWeek / 4) +
+          (year === student.joinYear && semester === student.joinSemester
+            ? Math.max(
+                0,
+                (isCurrentSemester
+                  ? currentSemesterDetails.month
+                  : semesterMonthsCount) -
+                  student.joinMonth +
+                  1
+              )
+            : currentSemesterDetails.month);
+
         return [
           student.studentID,
           `=HYPERLINK( "https://khuloodsabri.github.io/tejan-alnoor/students/${student.studentID}","صفحة الطالب/ة")`,
@@ -551,7 +585,7 @@ export async function getStudentsDetailedSheetRows(year, semester) {
             student.joinSemester
           ),
           studentLevel.levelName,
-          Math.floor(studentStartWeek / 4) + student.joinMonth,
+          studentCurrentSemesterMonth,
           student.status,
           presenceTotal,
           absenceTotal,
