@@ -267,9 +267,13 @@ const usageMessage = `Please choose whether
     - to create a new migration.
     - to view the current version.
     Examples:
-    node index.mjs run local 2024-09-26-21-51-17
     node index.mjs create "My migration desciption"
-    node index.mjs version local`;
+    node index.mjs version local
+    node index.mjs version prod
+    node index.mjs run local latest
+    node index.mjs run prod +1
+    node index.mjs run prod -1
+    node index.mjs run local 2024-09-26-21-51-17`;
 
 if (args.length < 1) {
   throw new Error(usageMessage);
