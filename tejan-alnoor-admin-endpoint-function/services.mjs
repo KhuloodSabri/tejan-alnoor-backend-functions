@@ -5,6 +5,7 @@ import {
   DynamoDBDocumentClient,
   BatchWriteCommand,
   PutCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
 import { translateNumberToArabic } from "./number.mjs";
@@ -95,6 +96,27 @@ export async function addSemesterDetails(
   );
 
   return item;
+}
+
+export async function setSemesterUpdateDate(semesterYear, semesterNumber) {
+  const newItem = await awsDocDynamoDbClient.send(
+    new UpdateCommand({
+      TableName: "Semesters",
+      Key: {
+        semesterID: `${semesterYear}-${semesterNumber}`,
+      },
+      UpdateExpression: "SET #updatedAt = :updatedAt",
+      ExpressionAttributeNames: {
+        "#updatedAt": "updatedAt",
+      },
+      ExpressionAttributeValues: {
+        ":updatedAt": Date.now(),
+      },
+      ReturnValues: "ALL_NEW",
+    })
+  );
+
+  return newItem;
 }
 
 function getMemorizingMeetingsPlan(level) {
@@ -315,11 +337,7 @@ export async function getStudentsDetailedSheetRows(year, semester) {
         // in level X. The rule is: we search in the monthly plan for the max month's progress that the student
         // already finished when moving to level X. We consider that after the level change the student will
         // commit to this plan starting from this plan month
-        for (let i = 0; i < semesterWeeksCount; i++) {
-          if (i < studentMissedWeeks) {
-            continue;
-          }
-
+        for (let i = 0; i < semesterWeeksCount - studentMissedWeeks; i++) {
           // month of semester
           const month = Math.floor(i / 4) + 1;
 
@@ -551,18 +569,39 @@ export async function getStudentsDetailedSheetRows(year, semester) {
           currentSemesterDetails.year === year &&
           currentSemesterDetails.semester === semester;
 
-        const studentCurrentSemesterMonth =
-          Math.floor(studentStartWeek / 4) +
-          (year === student.joinYear && semester === student.joinSemester
-            ? Math.max(
-                0,
-                (isCurrentSemester
-                  ? currentSemesterDetails.month
-                  : semesterMonthsCount) -
-                  student.joinMonth +
-                  1
-              )
-            : currentSemesterDetails.month);
+        const semesterMonthsPassed = isCurrentSemester
+          ? currentSemesterDetails.month
+          : semesterMonthsCount;
+
+        const studentMonthsPassedInSemester =
+          year === student.joinYear && semester === student.joinSemester
+            ? Math.max(0, semesterMonthsPassed - student.joinMonth + 1)
+            : semesterMonthsPassed;
+
+        const studentCurrentMonth =
+          Math.floor(studentStartWeek / 4) + studentMonthsPassedInSemester;
+
+        const planLevel1 =
+          levelsMap[weeksDetails[0]?.levelID]?.levelName ?? "/";
+        const planLevel2 =
+          levelsMap[weeksDetails[4]?.levelID]?.levelName ?? "/";
+        const planLevel3 =
+          levelsMap[weeksDetails[8]?.levelID]?.levelName ?? "/";
+
+        const planMonth1 = weeksDetails[0]
+          ? ((weeksDetails[0].weeklyPlanIndex ?? 0) - studentMissedWeeks) / 4 +
+            1
+          : "/";
+
+        const planMonth2 = weeksDetails[4]
+          ? ((weeksDetails[4].weeklyPlanIndex ?? 0) - studentMissedWeeks) / 4 +
+            1
+          : "/";
+
+        const planMonth3 = weeksDetails[8]
+          ? ((weeksDetails[8].weeklyPlanIndex ?? 0) - studentMissedWeeks) / 4 +
+            1
+          : "/";
 
         return [
           student.studentID,
@@ -584,8 +623,13 @@ export async function getStudentsDetailedSheetRows(year, semester) {
             student.joinYear,
             student.joinSemester
           ),
-          studentLevel.levelName,
-          studentCurrentSemesterMonth,
+          planLevel1,
+          planLevel2,
+          planLevel3,
+          planMonth1,
+          planMonth2,
+          planMonth3,
+          studentCurrentMonth,
           student.status,
           presenceTotal,
           absenceTotal,

@@ -335,3 +335,31 @@ export async function clearSheet(
     console.error("Error clearing sheet:", await response.text());
   }
 }
+
+export async function getSheetsMetadata(authToken, spreadsheetId) {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to fetch sheet info: ${response.status} ${response.statusText}. Details: ${errorText}`
+    );
+  }
+
+  const data = await response.json();
+
+  // Extract sheet names and IDs
+  const sheets = data.sheets.map((sheet) => ({
+    title: sheet.properties.title,
+    sheetId: sheet.properties.sheetId,
+  }));
+
+  return sheets;
+}

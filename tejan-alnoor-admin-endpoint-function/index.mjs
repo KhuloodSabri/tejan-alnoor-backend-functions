@@ -14,6 +14,7 @@ import {
   deleteSheet,
   clearSheet,
   DRIVE_FOLDER_ID,
+  getSheetsMetadata,
 } from "./googleApi.mjs";
 import {
   addSemesterDetails,
@@ -26,6 +27,7 @@ import {
   replaceStudents,
   searchStudentsByName,
   searchSupervisorsByName,
+  setSemesterUpdateDate,
   updateStudent,
   validateStudents,
   validateStudentsAgainstDB,
@@ -98,6 +100,32 @@ async function initializeSemester(
   await deleteSheet(googleApiToken, spreadsheetId, 0);
 
   return await addSemesterDetails(semesterYear, semesterNumber, spreadsheetId);
+}
+async function updateSheetTemplate(googleApiToken, spreadsheetId) {
+  const oldSheetsMetadata = await getSheetsMetadata(
+    googleApiToken,
+    spreadsheetId
+  );
+
+  const copiedSheet = await copySheet(
+    googleApiToken,
+    TEMPLATE_SPREADSHEET_ID,
+    spreadsheetId,
+    0
+  );
+
+  await Promise.all(
+    oldSheetsMetadata.map((sheetMetadata) =>
+      deleteSheet(googleApiToken, spreadsheetId, sheetMetadata.sheetId)
+    )
+  );
+
+  await renameSheet(
+    googleApiToken,
+    spreadsheetId,
+    copiedSheet.sheetId,
+    "Summary"
+  );
 }
 
 const initPromise = init();
@@ -174,16 +202,32 @@ export const handler = async (event) => {
       JSON.parse(secrets["service-account"])
     );
 
-    const semsterDetails = await getSemester(semesterYear, semesterNumber);
+    const semesterDetails = await getSemester(semesterYear, semesterNumber);
     let spreadsheetId;
 
-    if (!semsterDetails) {
+    if (!semesterDetails) {
       console.log("creating new google sheet");
       spreadsheetId = (
         await initializeSemester(semesterYear, semesterNumber, googleApiToken)
       ).spreadsheetId;
     } else {
-      spreadsheetId = semsterDetails.spreadsheetId;
+      spreadsheetId = semesterDetails.spreadsheetId;
+
+      const lastUpdateDate = Boolean(semesterDetails.updatedAt)
+        ? new Date(semesterDetails.updatedAt)
+        : new Date(semesterDetails.createdAt);
+      const lastTemplateChangeDate = new Date("2025-07-28");
+
+      if (lastUpdateDate < lastTemplateChangeDate) {
+        console.log("Updating sheet template");
+
+        await updateSheetTemplate(
+          googleApiToken,
+          semesterDetails.spreadsheetId
+        );
+      }
+
+      await setSemesterUpdateDate(semesterYear, semesterNumber);
     }
 
     await clearSheet(googleApiToken, spreadsheetId, "Summary", 3);
