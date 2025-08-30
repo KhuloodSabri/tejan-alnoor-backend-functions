@@ -617,7 +617,7 @@ export async function getSemesterStudentsDetails(
             if (
               isStudentFirstMonth &&
               newValue === 0 &&
-              i - studentMissedMeetingsCount < 4
+              i - studentMissedMeetingsCount < meetingsPerMonth / 2
             ) {
               missedMemInTwoWeeksAfterJoin++;
             }
