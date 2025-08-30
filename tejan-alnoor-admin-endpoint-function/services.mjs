@@ -197,6 +197,53 @@ function sortLevelChanges(studentLevelChanges) {
 }
 
 export async function getStudentsDetailedSheetRows(year, semester) {
+  const studentsDetails = await getSemesterStudentsDetails(year, semester);
+  const studentRows = studentsDetails.map((studentDetails) => {
+    return [
+      studentDetails.studentID,
+      studentDetails.studentLink,
+      studentDetails.supervisorName,
+      studentDetails.studentName,
+      Number(studentDetails.memorizingProgress),
+      studentDetails.gender,
+      `'${studentDetails.phoneNumber}`,
+      studentDetails.joinYear,
+      year,
+      semester,
+      studentDetails.joinSemester,
+      studentDetails.joinMonth,
+      studentDetails.groupNumber,
+      studentDetails.semestersCount,
+      ...studentDetails.semesterPlans,
+      ...studentDetails.semesterPlanMonths,
+      studentDetails.studentCurrentMonth,
+      studentDetails.status,
+      studentDetails.presenceCount.total,
+      studentDetails.presenceCount.memorizing,
+      studentDetails.presenceCount.revisit,
+      studentDetails.absenceCount.total,
+      studentDetails.absenceCount.memorizing,
+      studentDetails.absenceCount.revisit,
+      ...studentDetails.checkStatuses.flatMap((status) =>
+        [status.memorizing, status.revisit].filter((status) => status !== "-")
+      ),
+      ...studentDetails.presenceAndAbsenceDetails,
+      Number(studentDetails.tests[year]?.[semester]?.[1]),
+      Number(studentDetails.tests[year]?.[semester]?.[2]),
+      Number(studentDetails.tests[year]?.[semester]?.[3]),
+      Number(studentDetails.tests[year]?.[semester]?.[4]),
+      Number(studentDetails.tests[year]?.[semester]?.[5]),
+    ];
+  });
+
+  return studentRows;
+}
+
+export async function getSemesterStudentsDetails(
+  year,
+  semester,
+  gender = null
+) {
   const currentSemesterDetails =
     (
       await awsDocDynamoDbClient.send(
@@ -210,20 +257,25 @@ export async function getStudentsDetailedSheetRows(year, semester) {
     )?.Item?.value ?? null;
 
   console.log("getting semester students");
+  let genderFilterExpression = "";
+  if (gender) {
+    genderFilterExpression = "#gender = :gender AND ";
+  }
   const semesterStudents =
     (
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "Students",
-          FilterExpression:
-            "(#joinYear <= :year AND #joinSemester <= :semester) OR #joinYear < :year",
+          FilterExpression: `${genderFilterExpression}((#joinYear <= :year AND #joinSemester <= :semester) OR #joinYear < :year)`,
           ExpressionAttributeNames: {
             "#joinYear": "joinYear",
             "#joinSemester": "joinSemester",
+            ...(gender ? { "#gender": "gender" } : {}),
           },
           ExpressionAttributeValues: {
             ":year": year,
             ":semester": semester,
+            ...(gender ? { ":gender": gender } : {}),
           },
         })
       )
@@ -273,14 +325,21 @@ export async function getStudentsDetailedSheetRows(year, semester) {
     semesterWeeksCount * memorizingMeetingsPerWeek;
   const revisitingMeetingsCount = semesterWeeksCount * revisitMeetingsPerWeek;
   const meetingsCount = memorizingMeetingsCount + revisitingMeetingsCount;
+  const meetingsPerMonth =
+    memorizingMeetingsPerWeek * 4 + revisitMeetingsPerWeek * 4;
 
-  console.log("mapping semester students to rows");
+  const levelIdToMemMeetingsAbsenceLimits = {
+    0: { warn: 4, dismiss: 8 },
+    1: { warn: 4, dismiss: 8 },
+    2: { warn: 4, dismiss: 8 },
+    3: { warn: 2, dismiss: 6 },
+  };
+
+  console.log("getting semester students details");
   const studentsRows = await Promise.all(
     semesterStudents
       .sort((a, b) => a.createdAt - b.createdAt)
       .map(async (student) => {
-        const studentLevel = levelsMap[student.levelID];
-
         const studentStartWeek = getStudentStartWeek(
           { year, semester },
           student
@@ -297,6 +356,15 @@ export async function getStudentsDetailedSheetRows(year, semester) {
         const studentMissedMeetingsCount =
           studentMissedMemorizingMeetingsCount +
           studentMissedRevisitingMeetingsCount;
+
+        const studentMemMeetingsAbsenceLimits =
+          levelIdToMemMeetingsAbsenceLimits[student.levelID] || {
+            warn: Infinity,
+            dismiss: Infinity,
+          };
+
+        // TODO: pull this from DB
+        const studentSemesterPrevRevisitAlerts = [];
 
         const studentLevelChanges = student.levelChanges ?? [];
         const weeksDetails = [];
@@ -502,14 +570,38 @@ export async function getStudentsDetailedSheetRows(year, semester) {
         const presenceAndAbsenceDetails = [];
         let presenceTotal = 0;
         let absenceTotal = 0;
+        let memPresenceTotal = 0;
+        let memAbsenceTotal = 0;
+        let revisitPresenceTotal = 0;
+        let revisitAbsenceTotal = 0;
+        let missedMemInTwoWeeksAfterJoin = 0;
+
         const checksStatuses = [];
 
         for (let i = 0; i < meetingsCount; i++) {
           let newValue = 0;
+          let src = "";
+
+          const month = Math.floor(i / meetingsPerMonth) + 1;
+          const isStudentFirstMonth =
+            student.joinYear === year &&
+            student.joinSemester === semester &&
+            student.joinMonth === month;
+
+          const prevRevisitWarnAlertsCount =
+            studentSemesterPrevRevisitAlerts.filter(
+              (alert) =>
+                alert.semester === semester &&
+                alert.year === year &&
+                alert.month < month &&
+                alert.alertType === "warn"
+            ).length;
+
           if (i < studentMissedMeetingsCount) {
             newValue = 0;
           } else if (Math.floor(i + 1) % 3 === 0) {
             newValue = fullRevisitSummary[Math.floor(i / 3)];
+            src = "revisit";
           } else {
             const memorizingPlanIndex =
               i - Math.floor(i / 3) - studentMissedMemorizingMeetingsCount;
@@ -519,18 +611,47 @@ export async function getStudentsDetailedSheetRows(year, semester) {
                 memorizingPlan[memorizingPlanIndex].direction
               ];
             newValue = actualMemorized >= expectedMemorized ? 1 : 0;
+            src = "memorizing";
+
+            // if the student missed 4 memorizing meetings in the first two weeks after joining, they should be dismissed
+            if (
+              isStudentFirstMonth &&
+              newValue === 0 &&
+              i - studentMissedMeetingsCount < 4
+            ) {
+              missedMemInTwoWeeksAfterJoin++;
+            }
           }
 
           if (newValue === 1) {
             presenceTotal++;
+
+            if (src === "memorizing") {
+              memPresenceTotal++;
+            } else if (src === "revisit") {
+              revisitPresenceTotal++;
+            }
           } else {
             absenceTotal++;
+
+            if (src === "memorizing") {
+              memAbsenceTotal++;
+            } else if (src === "revisit") {
+              revisitAbsenceTotal++;
+            }
           }
+
           presenceAndAbsenceDetails.push(newValue);
 
           if ((i + 1) % 6 === 0) {
+            // not end of month
+            const skipRevisitCheck = (i + 1) % meetingsPerMonth !== 0;
+
             if (i < studentMissedMeetingsCount) {
-              checksStatuses.push("لم ينضم بعد");
+              checksStatuses.push({
+                memorizing: "لم ينضم بعد",
+                revisit: skipRevisitCheck ? "-" : "لم ينضم بعد",
+              });
             } else if (
               student.withdrawnSemesters?.some(
                 (studentSemester) =>
@@ -538,7 +659,10 @@ export async function getStudentsDetailedSheetRows(year, semester) {
                   studentSemester.semester === semester
               )
             ) {
-              checksStatuses.push("الطالبـ/ـة منسحب/ة");
+              checksStatuses.push({
+                memorizing: "الطالبـ/ـة منسحب/ة",
+                revisit: skipRevisitCheck ? "-" : "الطالبـ/ـة منسحب/ة",
+              });
             } else if (
               student.frozenSemesters?.some(
                 (studentSemester) =>
@@ -546,21 +670,41 @@ export async function getStudentsDetailedSheetRows(year, semester) {
                   studentSemester.semester === semester
               )
             ) {
-              checksStatuses.push("تم تجميد الفصل");
-            } else if (
-              student.dismissedSemesters?.some(
-                (studentSemester) =>
-                  studentSemester.year === year &&
-                  studentSemester.semester === semester
-              )
-            ) {
-              checksStatuses.push("تم  فصل الطالبـ/ـة");
-            } else if (absenceTotal - studentMissedMeetingsCount >= 5) {
-              checksStatuses.push("فصل");
-            } else if (absenceTotal - studentMissedMeetingsCount >= 3) {
-              checksStatuses.push("تحذير");
+              checksStatuses.push({
+                memorizing: "تم تجميد الفصل",
+                revisit: skipRevisitCheck ? "-" : "تم تجميد الفصل",
+              });
             } else {
-              checksStatuses.push("طبيعي");
+              let memStatus = "طبيعي";
+              let revisitStatus = "طبيعي";
+
+              if (missedMemInTwoWeeksAfterJoin >= 4) {
+                memStatus = "فصل";
+              } else if (
+                memAbsenceTotal >= studentMemMeetingsAbsenceLimits.dismiss
+              ) {
+                memStatus = "فصل";
+              } else if (
+                memAbsenceTotal >= studentMemMeetingsAbsenceLimits.warn
+              ) {
+                memStatus = "تحذير";
+              }
+
+              if (skipRevisitCheck) {
+                revisitStatus = "-";
+              } else if (revisitAbsenceTotal >= 4) {
+                // After two warnings, next is dismissal
+                if (prevRevisitWarnAlertsCount >= 2) {
+                  revisitStatus = "فصل";
+                } else {
+                  revisitStatus = "تحذير";
+                }
+              }
+
+              checksStatuses.push({
+                memorizing: memStatus,
+                revisit: revisitStatus,
+              });
             }
           }
         }
@@ -603,60 +747,102 @@ export async function getStudentsDetailedSheetRows(year, semester) {
             1
           : "/";
 
-        return [
-          student.studentID,
-          `=HYPERLINK( "https://khuloodsabri.github.io/tejan-alnoor/students/${student.studentID}","صفحة الطالب/ة")`,
-          supervisorsMap[student.supervisorID]?.supervisorName,
-          student.studentName,
-          Number(student.memorizingProgress),
-          student.gender === "male" ? "ذكر" : "أنثى",
-          `'${student.phoneNumber}`,
-          student.joinYear,
-          year,
-          semester,
-          student.joinSemester,
-          student.joinMonth,
-          student.groupNumber,
-          countSemesters(
+        return {
+          ...student,
+          studentLink: `=HYPERLINK( "https://khuloodsabri.github.io/tejan-alnoor/students/${student.studentID}","صفحة الطالب/ة")`,
+          supervisorName: supervisorsMap[student.supervisorID]?.supervisorName,
+          memorizingProgress: Number(student.memorizingProgress),
+          gender: student.gender === "male" ? "ذكر" : "أنثى",
+          semestersCount: countSemesters(
             year,
             semester,
             student.joinYear,
             student.joinSemester
           ),
-          planLevel1,
-          planLevel2,
-          planLevel3,
-          planMonth1,
-          planMonth2,
-          planMonth3,
+          semesterPlans: [planLevel1, planLevel2, planLevel3],
+          semesterPlanMonths: [planMonth1, planMonth2, planMonth3],
           studentCurrentMonth,
-          student.status,
-          presenceTotal,
-          absenceTotal,
-          ...(checksStatuses.length < 6
-            ? [
-                ...checksStatuses,
-                ...Array(6 - checksStatuses.length).fill(
-                  "الفصل الصيفي شهر واحد"
-                ),
-              ]
-            : checksStatuses),
-          ...(presenceAndAbsenceDetails.length < 36
-            ? [
-                ...presenceAndAbsenceDetails,
-                ...Array(36 - presenceAndAbsenceDetails.length).fill(0),
-              ]
-            : presenceAndAbsenceDetails),
-          Number(student.tests[year]?.[semester]?.[1]),
-          Number(student.tests[year]?.[semester]?.[2]),
-          Number(student.tests[year]?.[semester]?.[3]),
-          Number(student.tests[year]?.[semester]?.[4]),
-          Number(student.tests[year]?.[semester]?.[5]),
-        ];
+          presenceCount: {
+            total: presenceTotal,
+            memorizing: memPresenceTotal,
+            revisit: revisitPresenceTotal,
+          },
+          absenceCount: {
+            total: absenceTotal,
+            memorizing: memAbsenceTotal,
+            revisit: revisitAbsenceTotal,
+          },
+          checkStatuses:
+            checksStatuses.length < 6
+              ? [
+                  ...checksStatuses,
+                  ...Array(6 - checksStatuses.length)
+                    .fill({
+                      memorizing: "الفصل الصيفي شهر واحد",
+                      revisit: "الفصل الصيفي شهر واحد",
+                    })
+                    .map((status, index) => {
+                      // revisit check only on end of month and we have 2 checks per month
+                      if (index % 2 == 0) {
+                        return {
+                          memorizing: "الفصل الصيفي شهر واحد",
+                          revisit: "-",
+                        };
+                      }
+
+                      return status;
+                    }),
+                ]
+              : checksStatuses,
+          presenceAndAbsenceDetails:
+            presenceAndAbsenceDetails.length < 36
+              ? [
+                  ...presenceAndAbsenceDetails,
+                  ...Array(36 - presenceAndAbsenceDetails.length).fill(0),
+                ]
+              : presenceAndAbsenceDetails,
+        };
       })
   );
 
   return studentsRows;
+}
+
+export async function getStudentsAlerts(
+  year,
+  semester,
+  month,
+  checkRoundNumber,
+  gender
+) {
+  const studentsDetails = await getSemesterStudentsDetails(
+    year,
+    semester,
+    gender
+  );
+
+  // every month has two checks, one every two weeks
+  const statusIndex = (month - 1) * 2 + (checkRoundNumber === 1 ? 0 : 1);
+
+  const alerts = studentsDetails
+    .flatMap((studentDetails) => {
+      return Object.entries(studentDetails.checkStatuses[statusIndex]).map(
+        ([source, status]) => {
+          return {
+            studentID: studentDetails.studentID,
+            studentName: studentDetails.studentName,
+            supervisorName: studentDetails.supervisorName,
+            gender: studentDetails.gender,
+            phoneNumber: studentDetails.phoneNumber,
+            status,
+            alertSource: source === "memorizing" ? "حفظ" : "مراجعة",
+          };
+        }
+      );
+    })
+    .filter(({ status }) => status === "تحذير" || status === "فصل");
+
+  return alerts;
 }
 
 export async function getStudentsBriefSheetRows() {
@@ -929,20 +1115,6 @@ export function validateStudents(students) {
 
   return errors;
 }
-
-const getQueryListPlaceholders = (itemName, list) => {
-  const query = Array.from(
-    { length: list.length },
-    (_, i) => `#${itemName} = :${itemName}${i}`
-  ).join(" OR ");
-
-  const queryValues = list.reduce((acc, item, index) => {
-    acc[`:${itemName}${index}`] = item;
-    return acc;
-  }, {});
-
-  return { query, queryValues };
-};
 
 async function getExistingStudents(students) {
   const chunSize = 100;
