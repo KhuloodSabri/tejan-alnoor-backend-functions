@@ -340,4 +340,68 @@ export const handler = async (event) => {
     const response = await searchStudentsByName(queryParams.name);
     return buildResponse(200, response);
   }
+
+  if (httpMethod === "GET" && path === "/supervisors") {
+    if (!queryParams.name) {
+      return buildResponse(400, "Missing name query parameter");
+    }
+    const response = await searchSupervisorsByName(queryParams.name);
+    return buildResponse(200, response);
+  }
+
+  if (httpMethod === "GET" && path.startsWith("/students/")) {
+    if (path.replace("/students/", "").length === 0) {
+      return buildResponse(400, "Missing student ID");
+    }
+    const studentId = path.replace("/students/", "");
+
+    const student = await getStudentById(studentId, { supervisorName: true });
+
+    if (!student) {
+      return buildResponse(400, "Student not found");
+    }
+
+    return buildResponse(200, student);
+  }
+
+  if (httpMethod === "PUT" && path.startsWith("/students/")) {
+    if (path.replace("/students/", "").length === 0) {
+      return buildResponse(400, "Missing student ID");
+    }
+    const studentId = path.replace("/students/", "");
+
+    const existingStudent = await getStudentById(studentId, {});
+
+    if (!existingStudent) {
+      return buildResponse(400, "Student not found");
+    }
+
+    try {
+      validateUpdateStudentBody(body);
+    } catch (error) {
+      console.error(error);
+      return buildResponse(400, "Bad Request");
+    }
+
+    await updateStudent(
+      studentId,
+      {
+        ...existingStudent,
+        ...body,
+      },
+      existingStudent
+    );
+
+    return buildResponse(200, {
+      ...existingStudent,
+      ...body,
+    });
+  }
+
+  if (httpMethod === "GET" && path === "/levels") {
+    const response = await getLevels();
+    return buildResponse(200, response);
+  }
+
+  return buildResponse(404, "Not Found");
 };
