@@ -140,12 +140,12 @@ export const handler = async (event) => {
   const path = event.rawPath || event.requestContext.http.path;
   const origin = event.headers.origin;
 
-  // try {
-  //   await validateToken(event.headers.authorization);
-  // } catch (error) {
-  //   console.error(error);
-  //   return buildResponse(error.status ?? 500, error.message);
-  // }
+  try {
+    await validateToken(event.headers.authorization);
+  } catch (error) {
+    console.error(error);
+    return buildResponse(error.status ?? 500, error.message);
+  }
 
   if (httpMethod === "OPTIONS") {
     console.log("OPTIONS");
