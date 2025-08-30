@@ -34,6 +34,7 @@ import {
   validateUpdateStudentBody,
 } from "./services.mjs";
 import { validateToken } from "./auth.mjs";
+import { addAlert } from "./alerts.mjs";
 
 const SECRET_KEY = "tejan_al_noor";
 
@@ -357,6 +358,17 @@ export const handler = async (event) => {
   if (httpMethod === "GET" && path === "/levels") {
     const response = await getLevels();
     return buildResponse(200, response);
+  }
+  if (httpMethod === "POST" && path === "/alertStudents") {
+    try {
+      const response = await addAlert(body);
+      return buildResponse(200, response);
+    } catch (error) {
+      console.error(error);
+      return buildResponse(500, {
+        validationErrors: [error.message],
+      });
+    }
   }
 
   return buildResponse(404, "Not Found");
