@@ -316,6 +316,41 @@ export async function getSemesterStudentsDetails(
     return acc;
   }, {});
 
+  console.log("getting semester alerts");
+  const semesterRevisitWarnAlerts =
+    (
+      await awsDocDynamoDbClient.send(
+        new ScanCommand({
+          TableName: "alertsHistory",
+          FilterExpression: `#year = :year AND #semester = :semester AND #alertType = :alertType AND #alertSource = :alertSource`,
+          ExpressionAttributeNames: {
+            "#year": "year",
+            "#semester": "semester",
+            "#alertType": "alertType",
+            "#alertSource": "alertSource",
+          },
+          ExpressionAttributeValues: {
+            ":year": year,
+            ":semester": semester,
+            ":alertType": "warn",
+            ":alertSource": "revisit",
+          },
+        })
+      )
+    )?.Items ?? [];
+
+  console.log("mapping semester alerts");
+  const semesterRevisitWarnAlertsMap = semesterRevisitWarnAlerts.reduce(
+    (acc, alert) => {
+      if (!acc[alert.studentID]) {
+        acc[alert.studentID] = [];
+      }
+      acc[alert.studentID].push(alert);
+      return acc;
+    },
+    {}
+  );
+
   // Semester counts
   const semesterMonthsCount = semester === 3 ? 1 : 3;
   const semesterWeeksCount = semesterMonthsCount * 4;
@@ -363,8 +398,8 @@ export async function getSemesterStudentsDetails(
             dismiss: Infinity,
           };
 
-        // TODO: pull this from DB
-        const studentSemesterPrevRevisitAlerts = [];
+        const studentSemesterPrevRevisitAlerts =
+          semesterRevisitWarnAlertsMap[student.studentID] || [];
 
         const studentLevelChanges = student.levelChanges ?? [];
         const weeksDetails = [];
@@ -594,7 +629,8 @@ export async function getSemesterStudentsDetails(
                 alert.semester === semester &&
                 alert.year === year &&
                 alert.month < month &&
-                alert.alertType === "warn"
+                alert.alertType === "warn" &&
+                alert.alertSource === "revisit"
             ).length;
 
           if (i < studentMissedMeetingsCount) {
