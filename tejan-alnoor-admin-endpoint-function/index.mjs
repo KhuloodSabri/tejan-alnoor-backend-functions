@@ -217,7 +217,7 @@ export const handler = async (event) => {
       const lastUpdateDate = Boolean(semesterDetails.updatedAt)
         ? new Date(semesterDetails.updatedAt)
         : new Date(semesterDetails.createdAt);
-      const lastTemplateChangeDate = new Date("2025-09-03");
+      const lastTemplateChangeDate = new Date("2025-09-20");
 
       if (lastUpdateDate < lastTemplateChangeDate) {
         console.log("Updating sheet template");
