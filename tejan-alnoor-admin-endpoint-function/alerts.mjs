@@ -12,7 +12,7 @@ const awsDynamoDbClient =
         region: "eu-north-1",
       });
 
-const TABLE_NAME = "alerts_history";
+const TABLE_NAME = "alertHistory";
 
 const chunk = (arr, n) => {
   const out = [];
@@ -30,33 +30,24 @@ const normalizeAlert = (raw) => {
     createdAt,
     alertType,
     alertSource,
-    // frontend sends `semster`; allow `semester` as fallback
-    semster,
     semester,
+    year,
+    month,
     checkRoundNumber,
   } = raw;
-
-  const sem = semster ?? semester;
 
   if (!studentID) throw new Error("studentID is required.");
   if (typeof createdAt !== "number")
     throw new Error("createdAt (UNIX seconds) must be a number.");
   if (!alertType) throw new Error("alertType is required.");
   if (!alertSource) throw new Error("alertSource is required.");
-  if (!sem || typeof sem !== "object")
-    throw new Error("semster/semester object is required.");
+
   if (typeof checkRoundNumber !== "number")
     throw new Error("checkRoundNumber must be a number.");
 
-  const year = Number(sem.year);
-  const semVal = Number(sem.semester);
-  const month = Number(sem.month);
-
-  if (!Number.isFinite(year)) throw new Error("semster.year must be a number.");
-  if (!Number.isFinite(semVal))
-    throw new Error("semster.semester must be a number.");
-  if (!Number.isFinite(month))
-    throw new Error("semster.month must be a number.");
+  if (!Number.isFinite(year)) throw new Error("year must be a number.");
+  if (!Number.isFinite(semester)) throw new Error("semester must be a number.");
+  if (!Number.isFinite(month)) throw new Error("month must be a number.");
 
   return {
     id: uuidv4(),
@@ -64,7 +55,9 @@ const normalizeAlert = (raw) => {
     createdAt,
     alertType,
     alertSource,
-    semester: { year, semester: semVal, month }, // stored with correct key
+    year,
+    semester,
+    month,
     checkRoundNumber,
   };
 };

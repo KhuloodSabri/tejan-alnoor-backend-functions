@@ -321,7 +321,7 @@ export async function getSemesterStudentsDetails(
     (
       await awsDocDynamoDbClient.send(
         new ScanCommand({
-          TableName: "alertsHistory",
+          TableName: "alertHistory",
           FilterExpression: `#year = :year AND #semester = :semester AND #alertType = :alertType AND #alertSource = :alertSource`,
           ExpressionAttributeNames: {
             "#year": "year",
@@ -332,8 +332,8 @@ export async function getSemesterStudentsDetails(
           ExpressionAttributeValues: {
             ":year": year,
             ":semester": semester,
-            ":alertType": "warn",
-            ":alertSource": "revisit",
+            ":alertType": "تحذير",
+            ":alertSource": "مراجعة",
           },
         })
       )
@@ -629,8 +629,8 @@ export async function getSemesterStudentsDetails(
                 alert.semester === semester &&
                 alert.year === year &&
                 alert.month < month &&
-                alert.alertType === "warn" &&
-                alert.alertSource === "revisit"
+                alert.alertType === "تحذير" &&
+                alert.alertSource === "مراجعة"
             ).length;
 
           if (i < studentMissedMeetingsCount) {
