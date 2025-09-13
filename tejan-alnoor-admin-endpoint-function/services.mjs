@@ -317,39 +317,32 @@ export async function getSemesterStudentsDetails(
   }, {});
 
   console.log("getting semester alerts");
-  const semesterRevisitWarnAlerts =
+  const semesterAlerts =
     (
       await awsDocDynamoDbClient.send(
         new ScanCommand({
           TableName: "alertHistory",
-          FilterExpression: `#year = :year AND #semester = :semester AND #alertType = :alertType AND #alertSource = :alertSource`,
+          FilterExpression: `#year = :year AND #semester = :semester`,
           ExpressionAttributeNames: {
             "#year": "year",
             "#semester": "semester",
-            "#alertType": "alertType",
-            "#alertSource": "alertSource",
           },
           ExpressionAttributeValues: {
             ":year": year,
             ":semester": semester,
-            ":alertType": "تحذير",
-            ":alertSource": "مراجعة",
           },
         })
       )
     )?.Items ?? [];
 
   console.log("mapping semester alerts");
-  const semesterRevisitWarnAlertsMap = semesterRevisitWarnAlerts.reduce(
-    (acc, alert) => {
-      if (!acc[alert.studentID]) {
-        acc[alert.studentID] = [];
-      }
-      acc[alert.studentID].push(alert);
-      return acc;
-    },
-    {}
-  );
+  const semesterAlertsMap = semesterAlerts.reduce((acc, alert) => {
+    if (!acc[alert.studentID]) {
+      acc[alert.studentID] = [];
+    }
+    acc[alert.studentID].push(alert);
+    return acc;
+  }, {});
 
   // Semester counts
   const semesterMonthsCount = semester === 3 ? 1 : 3;
@@ -398,8 +391,8 @@ export async function getSemesterStudentsDetails(
             dismiss: Infinity,
           };
 
-        const studentSemesterPrevRevisitAlerts =
-          semesterRevisitWarnAlertsMap[student.studentID] || [];
+        const studentSemesterAlerts =
+          semesterAlertsMap[student.studentID] || [];
 
         const studentLevelChanges = student.levelChanges ?? [];
         const weeksDetails = [];
@@ -623,15 +616,15 @@ export async function getSemesterStudentsDetails(
             student.joinSemester === semester &&
             student.joinMonth === month;
 
-          const prevRevisitWarnAlertsCount =
-            studentSemesterPrevRevisitAlerts.filter(
-              (alert) =>
-                alert.semester === semester &&
-                alert.year === year &&
-                alert.month < month &&
-                alert.alertType === "تحذير" &&
-                alert.alertSource === "مراجعة"
-            ).length;
+          const prevRevisitWarnAlertsCount = studentSemesterAlerts.filter(
+            (alert) =>
+              alert.semester === semester &&
+              alert.year === year &&
+              alert.month < month &&
+              alert.alertType === "تحذير" &&
+              alert.alertSource === "مراجعة" &&
+              !alert.recoveredAt
+          ).length;
 
           if (i < studentMissedMeetingsCount) {
             newValue = 0;
@@ -837,6 +830,7 @@ export async function getSemesterStudentsDetails(
                   ...Array(36 - presenceAndAbsenceDetails.length).fill(0),
                 ]
               : presenceAndAbsenceDetails,
+          semesterAlerts: studentSemesterAlerts,
         };
       })
   );
@@ -859,24 +853,41 @@ export async function getStudentsAlerts(
 
   // every month has two checks, one every two weeks
   const statusIndex = (month - 1) * 2 + (checkRoundNumber === 1 ? 0 : 1);
+  const sourceMap = {
+    memorizing: "حفظ",
+    revisit: "مراجعة",
+  };
 
   const alerts = studentsDetails
     .flatMap((studentDetails) => {
       return Object.entries(studentDetails.checkStatuses[statusIndex]).map(
         ([source, status]) => {
+          const alert = studentDetails.semesterAlerts.find(
+            (alert) =>
+              alert.alertSource === sourceMap[source] &&
+              alert.alertType === status &&
+              alert.checkRoundNumber === checkRoundNumber &&
+              // These below are just double checkings
+              alert.month === month &&
+              alert.year === year &&
+              alert.semester === semester
+          );
+
           return {
             studentID: studentDetails.studentID,
             studentName: studentDetails.studentName,
             supervisorName: studentDetails.supervisorName,
             gender: studentDetails.gender,
             phoneNumber: studentDetails.phoneNumber,
-            status,
-            alertSource: source === "memorizing" ? "حفظ" : "مراجعة",
+            alertType: status,
+            alertSource: sourceMap[source],
+            alertId: alert?.id,
+            alertRecoveredAt: alert?.recoveredAt || null,
           };
         }
       );
     })
-    .filter(({ status }) => status === "تحذير" || status === "فصل");
+    .filter(({ alertType }) => alertType === "تحذير" || alertType === "فصل");
 
   return alerts;
 }
