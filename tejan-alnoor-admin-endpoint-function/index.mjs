@@ -35,6 +35,7 @@ import {
   validateUpdateStudentBody,
 } from "./services.mjs";
 import { validateToken } from "./auth.mjs";
+import { addAlerts, updateAlert } from "./alerts.mjs";
 
 const SECRET_KEY = "tejan_al_noor";
 
@@ -400,6 +401,31 @@ export const handler = async (event) => {
 
   if (httpMethod === "GET" && path === "/levels") {
     const response = await getLevels();
+    return buildResponse(200, response);
+  }
+  if (httpMethod === "POST" && path === "/alertStudents") {
+    try {
+      const response = await addAlerts(body);
+      return buildResponse(200, response);
+    } catch (error) {
+      console.error(error);
+      return buildResponse(500, {
+        validationErrors: [error.message],
+      });
+    }
+  }
+
+  if (httpMethod === "PUT" && path.startsWith("/alerts/")) {
+    if (path.replace("/alerts/", "").length === 0) {
+      return buildResponse(400, "Missing alert ID");
+    }
+    const alertId = path.replace("/alerts/", "");
+
+    if (!alertId) {
+      return buildResponse(400, "Required alert ID");
+    }
+
+    const response = await updateAlert(alertId, body);
     return buildResponse(200, response);
   }
 
