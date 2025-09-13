@@ -22,6 +22,7 @@ import {
   getLevels,
   getSemester,
   getStudentById,
+  getStudentsAlerts,
   getStudentsBriefSheetRows,
   getStudentsDetailedSheetRows,
   replaceStudents,
@@ -217,7 +218,7 @@ export const handler = async (event) => {
       const lastUpdateDate = Boolean(semesterDetails.updatedAt)
         ? new Date(semesterDetails.updatedAt)
         : new Date(semesterDetails.createdAt);
-      const lastTemplateChangeDate = new Date("2025-07-28");
+      const lastTemplateChangeDate = new Date("2025-09-20");
 
       if (lastUpdateDate < lastTemplateChangeDate) {
         console.log("Updating sheet template");
@@ -231,19 +232,61 @@ export const handler = async (event) => {
       await setSemesterUpdateDate(semesterYear, semesterNumber);
     }
 
-    await clearSheet(googleApiToken, spreadsheetId, "Summary", 3);
+    await clearSheet(googleApiToken, spreadsheetId, "Summary", 4);
     await writeToGoogleSheet(
       googleApiToken,
       studentsRows,
       spreadsheetId,
       "Summary",
-      3
+      4
     );
 
     console.log("done writing to google sheet");
     return buildResponse(200, {
       spreadsheetId: spreadsheetId,
     });
+  }
+
+  if (httpMethod === "GET" && path === "/students/alerts") {
+    const semesterYear = Number(queryParams.year);
+    const semesterNumber = Number(queryParams.semester);
+    const month = Number(queryParams.month);
+    const checkRoundNumber = Number(queryParams.checkRoundNumber);
+    const gender = queryParams.gender;
+
+    if (isNaN(semesterYear) || semesterYear < 2000) {
+      return buildResponse(400, "Invalid yeay parameter");
+    }
+
+    if (isNaN(semesterNumber) || semesterNumber < 1 || semesterNumber > 3) {
+      return buildResponse(400, "Invalid semester parameter");
+    }
+
+    if (isNaN(month) || month < 1 || month > 3) {
+      return buildResponse(400, "Invalid month parameter");
+    }
+
+    if (
+      isNaN(checkRoundNumber) ||
+      checkRoundNumber < 1 ||
+      checkRoundNumber > 2
+    ) {
+      return buildResponse(400, "Invalid checkRoundNumber parameter");
+    }
+
+    if (gender && gender !== "male" && gender !== "female") {
+      return buildResponse(400, "Invalid gender parameter");
+    }
+
+    const studentsAlerts = await getStudentsAlerts(
+      semesterYear,
+      semesterNumber,
+      month,
+      checkRoundNumber,
+      gender
+    );
+
+    return buildResponse(200, studentsAlerts);
   }
 
   if (httpMethod === "POST" && path === "/students") {
@@ -294,6 +337,7 @@ export const handler = async (event) => {
     if (!queryParams.name) {
       return buildResponse(400, "Missing name query parameter");
     }
+
     const response = await searchStudentsByName(queryParams.name);
     return buildResponse(200, response);
   }
