@@ -1,6 +1,8 @@
 import fs from "fs";
 import csv from "csv-parser";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import path from "path";
+import { fileURLToPath } from "url";
 
 export const suar = [
   { id: 1, surah: "ٱلْفَاتِحَةِ", ayah: 7 },
@@ -118,6 +120,37 @@ export const suar = [
   { id: 113, surah: "الفَلَقِ", ayah: 5 },
   { id: 114, surah: "النَّاسِ", ayah: 6 },
 ];
+
+/**
+ * Build a map of { [index]: page_range } from level4.json and save it to a file.
+ *
+ * @param {string} [inputPath] - Optional input path for level4.json. Defaults to ./level4.json.
+ * @param {string} [outputFileName] - Optional output file name. Defaults to level4weeklycitation.json in this directory.
+ * @returns {Record<string, number[]>} The generated map.
+ */
+export function writeLevel4WeeklyCitation(
+  inputPath,
+  outputFileName = "level4weeklycitation.json"
+) {
+  const fullPath = resolveLocalPath(inputPath);
+  const raw = fs.readFileSync(fullPath, "utf8");
+  const data = JSON.parse(raw);
+  if (!Array.isArray(data)) {
+    throw new Error("Expected an array in level4.json");
+  }
+  const mapp = {};
+  data.forEach((item) => {
+    if (typeof item?.index !== "number" || !Array.isArray(item?.page_range)) {
+      throw new Error(
+        "Invalid item shape in level4.json: expected { index: number, page_range: number[] }"
+      );
+    }
+    mapp[String(item.index)] = item.page_range;
+  });
+  const outPath = path.resolve(__dirname, outputFileName);
+  fs.writeFileSync(outPath, JSON.stringify(mapp, null, 2), "utf8");
+  return mapp;
+}
 
 const isEmptyCell = (cell) => {
   return (
@@ -272,6 +305,13 @@ async function fillDataFromCsv(filePath) {
   console.log("==========================");
 }
 
-fillDataFromCsv(
-  "C:\\Users\\hp\\Downloads\\معلومات المراجعة للمستويات - Sheet1.csv"
+// fillDataFromCsv(
+//   "/Users/barajabali/Downloads/معلومات المراجعة للمستويات - Sheet1.csv"
+// );
+
+// Example:
+// Generate and save the weekly citation map next to this script:
+writeLevel4WeeklyCitation(
+  "../scripts/level4.json",
+  "level4weeklycitation.json"
 );
