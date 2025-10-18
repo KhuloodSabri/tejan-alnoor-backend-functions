@@ -3,6 +3,8 @@
     "@aws-sdk/client-dynamodb": "^3.645.0",
     "@aws-sdk/client-secrets-manager": "^3.637.0",
     "@aws-sdk/lib-dynamodb": "^3.645.0",
-    "csv-parser": "^3.0.0"
+    "csv-parse": "^6.1.0",
+    "csv-parser": "^3.0.0",
+    "fuzzy-search": "^3.2.1"
   }
 }
